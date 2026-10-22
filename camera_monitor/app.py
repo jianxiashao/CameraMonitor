@@ -261,7 +261,8 @@ class Window(QMainWindow):
         settings_index = self.wall.right_layout.indexOf(self.wall.settings_button)
         self.wall.right_layout.insertWidget(settings_index, self.cloud_button)
         work.addWidget(self.wall,1)
-        work.setContentsMargins(0,0,42,0)
+        # 连接设置是浮层，不占工作区宽度；原来的竖排标签和 42px 右边距都去掉了
+        work.setContentsMargins(0,0,0,0)
         self.settings_panel=QFrame(root);self.settings_panel.setObjectName('settingsPanel')
         panel=QVBoxLayout(self.settings_panel);panel.setContentsMargins(10,6,10,6)
         panel_header=QHBoxLayout()
@@ -273,10 +274,12 @@ class Window(QMainWindow):
         self.settings_stack=QStackedWidget();self.settings_scroll.setWidget(self.settings_stack)
         panel.addWidget(self.settings_scroll)
         self.settings_panel.hide()
-        self.settings_tab=QPushButton('连\n接\n设\n置',root)
-        self.settings_tab.setObjectName('settingsTab')
+        # 入口改成工具栏右侧的普通按钮（不再用竖排标签占一条边）
+        self.settings_tab=QPushButton('连接设置')
+        self.settings_tab.setToolTip('先在左侧选中设备，或点画面上的「设置」')
         self.settings_tab.clicked.connect(self.open_selected_settings)
-        self.settings_tab.setToolTip('选择左侧设备后打开连接设置')
+        settings_index=self.wall.right_layout.indexOf(self.wall.settings_button)
+        self.wall.right_layout.insertWidget(settings_index, self.settings_tab)
         split.addWidget(workspace);split.setStretchFactor(1,1);split.setSizes([225,1320])
         # 界面样式由 bootstrap.main 在启动时贴一次（theme.apply）。
         # 窗口自己 setStyleSheet 会盖掉主题；在这里 apply 又会让每个新建窗口都重算全局样式，
@@ -401,8 +404,9 @@ class Window(QMainWindow):
 
     def position_overlay(self):
         root=self.centralWidget()
-        self.settings_panel.setGeometry(max(0,root.width()-390),20,370,max(200,root.height()-40))
-        self.settings_tab.setGeometry(max(0,root.width()-48),max(26,(root.height()-108)//2),36,108)
+        # 面板窄一点、贴右上，尽量少盖住画面；关掉时完全不占位
+        width=336
+        self.settings_panel.setGeometry(max(0,root.width()-width-12),12,width,max(200,root.height()-24))
         if hasattr(self,'managed'):self.managed.refresh_overlays()
         if hasattr(self,'welcome'):
             self.welcome.setGeometry(root.rect())
@@ -418,7 +422,8 @@ class Window(QMainWindow):
         self.sidebar.setVisible(not enabled);self.settings_tab.setVisible(not enabled)
         self.root_layout.setContentsMargins(*((0,0,0,0) if enabled else (20,20,20,20)))
         self.root_layout.setSpacing(0 if enabled else 12)
-        self.work_layout.setContentsMargins(*((0,0,0,0) if enabled else (0,0,42,0)))
+        # 工作区始终不留边距：连接设置是浮层，不该挤占画面
+        self.work_layout.setContentsMargins(0,0,0,0)
         self.wall.set_presentation(enabled)
 
     def toggle_fullscreen(self):

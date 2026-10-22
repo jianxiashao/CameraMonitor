@@ -28,7 +28,6 @@ QMenu::separator { height:1px; margin:4px 8px; }
 QScrollArea { border:none; }
 QFrame#settingsPanel { border-radius:8px; }
 QSplitter::handle { width:1px; }
-QPushButton#settingsTab { padding:4px; }
 """
 
 LIGHT_QSS = """
@@ -48,7 +47,6 @@ QFrame#settingsPanel { background:white; border:1px solid #cbd8e8; }
 QProgressBar { border:none; background:#e5eaf2; }
 QProgressBar::chunk { background:#2463eb; }
 QSplitter::handle { background:#dce4ee; }
-QPushButton#settingsTab { color:#405570; }
 QLabel#videoSurface { background:#edf2f8; color:#64748b; border-radius:8px; }
 QLabel#videoSurface[playing="true"] { background:transparent; }
 QPushButton#deviceRow { background:transparent; border:none; border-bottom:1px solid #e9eef5; border-radius:0; padding:8px; }
@@ -75,7 +73,6 @@ QFrame#settingsPanel { background:#16202d; border:1px solid #2a3547; }
 QProgressBar { border:none; background:#1b2534; }
 QProgressBar::chunk { background:#2563eb; }
 QSplitter::handle { background:#22303f; }
-QPushButton#settingsTab { color:#a8b6c8; }
 QLabel#videoSurface { background:#0f1720; color:#7a8ba0; border-radius:8px; }
 QLabel#videoSurface[playing="true"] { background:transparent; }
 QPushButton#deviceRow { background:transparent; border:none; border-bottom:1px solid #22303f; border-radius:0; padding:8px; }
