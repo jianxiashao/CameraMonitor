@@ -15,7 +15,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QBoxLayout, QInputDialog, QCheckBox,
     QPlainTextEdit, QProgressBar, QSplitter, QFrame, QScrollArea, QStackedWidget, QSizePolicy,
-    QFileDialog, QMessageBox, QMenu)
+    QFileDialog, QMessageBox)
 from . import __version__
 from .diagnostics import collect as collect_diagnostics
 from .config_io import ConfigError, apply_config, export_config, load_config
@@ -202,33 +202,17 @@ class Window(QMainWindow):
         self.play.hide()
         self.copy=QPushButton('复制 IP');self.copy.setEnabled(False);self.copy.clicked.connect(self.copy_ip)
 
-        # 低频操作收进一个菜单：侧边栏的纵向空间要留给设备列表
-        more=QPushButton('更多操作')
-        more.setToolTip('批量账号密码、导出诊断包、配置导入导出、切换主题')
-        more_menu=QMenu(more)
-        more_menu.addAction('批量账号密码…', self.show_batch_settings)
-        more_menu.addAction('导出诊断包…', self.export_diagnostics)
-        more_menu.addSeparator()
-        more_menu.addAction('导出配置…', self.export_config_file)
-        more_menu.addAction('导入配置…', self.import_config_file)
-        more_menu.addSeparator()
-        self.theme_action=more_menu.addAction(theme.label(theme.current()), self.toggle_theme)
-        more_menu.addAction('每天自动重启…', self.configure_restart_hour)
-        more.setMenu(more_menu)
         self.cloud_panel=CloudPanel()
         self.cloud_panel.login_requested.connect(self.cloud_login)
         self.cloud_panel.logout_requested.connect(self.cloud_logout)
         side.addWidget(self.cloud_panel)
-        # 底部固定操作条：低频按钮都进了菜单，这里只留两个常驻入口
+        # 底部只留一个常驻入口：其余高频/低频操作都收进了工具栏的「设置」菜单
         divider=QFrame();divider.setFrameShape(QFrame.Shape.HLine)
         divider.setStyleSheet('color:#dce4ee; background:#dce4ee; max-height:1px;')
         side.addWidget(divider)
-        tools=QHBoxLayout();tools.setSpacing(6)
-        tools.addWidget(more,1)
         self.detail_toggle=QPushButton('设备详情');self.detail_toggle.setCheckable(True)
         self.detail_toggle.setToolTip('展开网络与设备详情、运行日志')
-        tools.addWidget(self.detail_toggle,1)
-        side.addLayout(tools)
+        side.addWidget(self.detail_toggle)
         self.diagnostics=QWidget();diagnostic_layout=QVBoxLayout(self.diagnostics)
         diagnostic_layout.setContentsMargins(0,0,0,0)
         self.details=QPlainTextEdit();self.details.setReadOnly(True);self.details.setMaximumHeight(100)
@@ -250,6 +234,17 @@ class Window(QMainWindow):
         self.wall.finished.connect(self.release_multiview)
         self.wall.settings_requested.connect(self.show_settings)
         self.wall.tile_removing.connect(self.remove_settings)
+        self.wall.patrol_requested.connect(self.refresh_snapshot)
+        # 工具栏「设置」菜单：原来侧边栏「更多操作」里的功能全在这里
+        settings_menu = self.wall.settings_menu
+        settings_menu.addAction('批量账号密码…', self.show_batch_settings)
+        settings_menu.addAction('导出诊断包…', self.export_diagnostics)
+        settings_menu.addSeparator()
+        settings_menu.addAction('导出配置…', self.export_config_file)
+        settings_menu.addAction('导入配置…', self.import_config_file)
+        settings_menu.addSeparator()
+        self.theme_action = settings_menu.addAction(theme.label(theme.current()), self.toggle_theme)
+        settings_menu.addAction('每天自动重启…', self.configure_restart_hour)
         work.addWidget(self.wall,1)
         work.setContentsMargins(0,0,42,0)
         self.settings_panel=QFrame(root);self.settings_panel.setObjectName('settingsPanel')
@@ -629,6 +624,12 @@ class Window(QMainWindow):
         # 画面区用的是内联样式，主题变了要挨个刷新一遍
         for surface in self.findChildren(VideoSurface):
             surface.refresh_theme()
+
+    def refresh_snapshot(self, ip):
+        """一键巡检用：给这一路重新取一张画面（复用缩略图的 ONVIF + 抓帧）。"""
+        device = self.devices.get(ip)
+        if device is not None:
+            self.thumbnails.request(device)
 
     def check_scheduled_restart(self):
         """每天固定时间重启一次：长期运行内存/句柄缓慢增长时的兜底，默认关闭。"""

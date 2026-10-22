@@ -298,6 +298,8 @@ class MultiView(QDialog):
     device_status=Signal(str,str)
     # 画面异常（黑屏、冻结）发生或恢复；空字符串表示恢复
     camera_alert=Signal(str,str)
+    # 一键巡检：让上层给这一路重新取一张画面（复用缩略图那套 ONVIF + 抓帧）
+    patrol_requested=Signal(str)
     fullscreen_requested=Signal()
     tile_removing=Signal(object)
     settings_requested=Signal(object)
@@ -388,7 +390,16 @@ class MultiView(QDialog):
         self.stop_all.setToolTip('停掉全部画面，不改动任何配置。')
         self.stop_all.clicked.connect(self.stop_everything)
         toolbar.addWidget(self.stop_all)
+        self.patrol=QPushButton('一键巡检')
+        self.patrol.setToolTip('逐路重新取一次画面，并汇总哪些相机离线或异常')
+        self.patrol.clicked.connect(self.start_patrol)
+        toolbar.addWidget(self.patrol)
         toolbar.addStretch()
+        # 设置：原来侧边栏「更多操作」里的功能都收进这个菜单
+        self.settings_button=QPushButton('设置')
+        self.settings_menu=QMenu(self.settings_button)
+        self.settings_button.setMenu(self.settings_menu)
+        toolbar.addWidget(self.settings_button)
         self.fullscreen=QPushButton('全屏')
         self.fullscreen.clicked.connect(self.fullscreen_requested)
         toolbar.addWidget(self.fullscreen)
@@ -755,6 +766,31 @@ class MultiView(QDialog):
             image = tile.player.surface.current_image()
             if image is not None:
                 self.recorders.add(tile.player.device.ip, image)
+
+    def start_patrol(self):
+        """一键巡检：让每路重新取一张画面，并汇总当前状态。
+
+        取帧走缩略图那套（ONVIF 解析 + 抓一帧，并发 2）；这里先把汇总说清楚，
+        几秒后左侧缩略图会各自更新成最新画面。
+        """
+        if self.closing:
+            return
+        tiles = list(self.tiles)
+        if not tiles:
+            self.message.setText('巡检：监控墙上还没有相机')
+            return
+        for tile in tiles:
+            self.patrol_requested.emit(tile.player.device.ip)
+        healthy = [t for t in tiles if not t.alert_message and getattr(t.player, 'rendering', False)]
+        abnormal = [t for t in tiles if t.alert_message]
+        idle = [t for t in tiles if not t.alert_message and not getattr(t.player, 'rendering', False)]
+        parts = [f'巡检 {len(tiles)} 路：{len(healthy)} 路正常']
+        if abnormal:
+            parts.append(f'{len(abnormal)} 路异常（{abnormal[0].player.device.ip} 等）')
+        if idle:
+            parts.append(f'{len(idle)} 路未在播放')
+        self.message.setText('，'.join(parts) + ' · 正在逐路取画面…')
+        logger.info('一键巡检：%s', '，'.join(parts))
 
     def stop_everything(self):
         self.reconnect_timer.stop()
