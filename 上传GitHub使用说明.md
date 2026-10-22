@@ -1,7 +1,7 @@
 # 上传到 GitHub 说明
 
 把这份本地源码上传到自己的 GitHub 仓库，再让 Actions 产出
-`CameraMonitor-Windows11-x64`（Windows 10/11）。
+`CameraMonitor-Windows11-x64`（Windows 11 x64）。
 
 一句话流程：**建一个空仓库 → 关联远程 → push → 在 Actions 里看构建 → 从 Artifacts 下载产物**。
 
@@ -40,8 +40,7 @@ git config --global user.email
 | 项目 | 值 |
 | --- | --- |
 | 分支 | `main`（必须是 main，见第 5 节的说明） |
-| 提交 | `d0a7350` 扩充 .gitignore、`f4d7d14` 首次提交 |
-| 跟踪文件 | 124 个（源码、测试、文档、配置） |
+| 跟踪文件 | 146 个（源码、测试、文档、配置、工作流） |
 | 仓库大小 | 约 5 MB（不含构建产物） |
 | 远程 | 尚未关联 |
 
@@ -150,7 +149,7 @@ Windows 构建设成**只在手动运行时执行**，push 到 main 不会自动
    | `CameraMonitor.exe` | 主程序，复制到目标 Windows 电脑双击即可 |
    | `使用说明.md` | = `packaging/Windows使用说明.md` |
    | `SHA256SUMS.txt` | 校验值，可用 `certutil -hashfile CameraMonitor.exe SHA256` 对比 |
-   | `BUILD.txt` | 提交号、运行编号、目标系统、Python/Qt 版本 |
+   | `BUILD.txt` | 提交号、运行编号、目标系统、摄像头实机验收状态 |
 
 Release 里的文件长期保留；Artifacts 默认**保留 14 天**，过期后重新跑一次 workflow 即可再生成。
 
@@ -259,7 +258,7 @@ Release 的说明文字取自 `packaging/RELEASE.md`，发版前记得更新它�
 1. 双击 `upload-to-github.bat`
 2. 第一次运行会提示粘贴仓库地址，例如 `https://github.com/你的用户名/CameraMonitor.git`
    （地址会写进 git 的 `origin`，**以后运行不再询问**；想换地址在提示里按 `n` 重新输入）
-3. 之后全自动，结束时打印 Actions 地址和要去哪里下载 `CameraMonitor-Windows7-x64`
+3. 之后全自动，结束时打印 Actions 地址和要去哪里下载 `CameraMonitor-Windows11-x64`
 
 ### 脚本会做什么
 
