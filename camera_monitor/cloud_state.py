@@ -1,0 +1,321 @@
+"""Translate between the cloud configuration and this computer's own settings.
+
+Kept free of widgets so the mapping can be tested on its own; the orchestration
+(threads, timers, UI) lives in cloud_sync.py.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+
+from .connection_options import ConnectionOptions
+from .credentials import CredentialError
+from .device_names import DeviceNames
+from .discovery import Device
+
+# 与 playback.PlayerWindow 的取流下拉顺序一致
+STREAM_MODES = ('onvif', 'dahua', 'manual')
+
+MAX_SLOTS = 25
+EQUAL_CAPACITIES = (4, 9, 12, 16, 20, 25)
+CAPACITIES = (4, 6, 9, 10, 12, 15, 16, 20, 25)
+MODES = ('full', 'managed')
+# 钥匙串里专门存「这个点位的默认摄像头账号」的那一条，和摄像头 IP 不会撞名
+DEFAULT_CREDENTIAL_ACCOUNT = '__default__'
+
+
+def profile_mode(snapshot) -> str:
+    mode = str((snapshot or {}).get('mode') or 'full')
+    return mode if mode in MODES else 'full'
+
+
+def _default_credentials(snapshot):
+    """只有带着 password 键的那份（云端直接下发的）才算数；离线缓存里剥掉了密码，返回 None。"""
+    value = (snapshot or {}).get('default_credentials')
+    if not isinstance(value, dict) or 'password' not in value:
+        return None
+    return str(value.get('username') or ''), str(value.get('password') or '')
+
+
+def mode_index(stream_mode) -> int:
+    try:
+        return STREAM_MODES.index(str(stream_mode))
+    except ValueError:
+        return 0
+
+
+def stream_mode(index) -> str:
+    try:
+        return STREAM_MODES[int(index)]
+    except (ValueError, TypeError, IndexError):
+        return STREAM_MODES[0]
+
+
+def camera_entry(device, *, slot_index, display_name='', name_color='#ffffff',
+                 name_corner='top-left', transport='tcp', username='', password=None,
+                 stream_mode='onvif', dahua_channel=1, manual_url='') -> dict:
+    """密码留 None 表示「不改动云端已存的值」，传空串才是清空。"""
+    entry = {
+        'ip': device.ip,
+        'slot_index': int(slot_index),
+        'display_name': display_name or '',
+        'model': device.model or '',
+        'manufacturer': device.manufacturer or '',
+        'protocols': list(device.protocols or []),
+        'onvif_urls': list(device.urls or []),
+        'stream_mode': stream_mode,
+        'dahua_channel': int(dahua_channel or 1),
+        'manual_url': manual_url or '',
+        'transport': transport or 'tcp',
+        'username': username or '',
+        'name_color': name_color,
+        'name_corner': name_corner,
+    }
+    if password is not None:
+        entry['password'] = password
+    return entry
+
+
+def device_from_camera(camera) -> Device:
+    return Device(
+        ip=str(camera.get('ip', '')),
+        name=str(camera.get('display_name') or ''),
+        model=str(camera.get('model') or ''),
+        manufacturer=str(camera.get('manufacturer') or ''),
+        protocols=list(camera.get('protocols') or []),
+        urls=list(camera.get('onvif_urls') or []),
+    )
+
+
+def slot_order(cameras) -> list:
+    """还原 QSettings monitor/slots 的形状：下标即格子，空位是空串。"""
+    positions = {}
+    for camera in cameras:
+        try:
+            index = int(camera.get('slot_index', 0))
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < MAX_SLOTS:
+            positions[index] = str(camera.get('ip', ''))
+    if not positions:
+        return []
+    return [positions.get(i, '') for i in range(max(positions) + 1)]
+
+
+def flag(value) -> bool:
+    """QSettings 的 ini 读回来是 'true' / 'false' 字符串，bool('false') 却是 True。"""
+    if isinstance(value, str):
+        return value.strip().lower() in ('true', '1')
+    return bool(value)
+
+
+def layout_entry(capacity, columns, fill_width, organization,
+                 autostart=None, start_fullscreen=None) -> dict:
+    """autostart / start_fullscreen 留 None 表示「不知道」，不放进结果：
+    旧后台下发的配置里没有这两项，不能当成 false 把本机勾选清掉。"""
+    normalised = {}
+    for key, value in (columns or {}).items():
+        try:
+            key, value = int(key), int(value)
+        except (TypeError, ValueError):
+            continue
+        if key in EQUAL_CAPACITIES and 1 <= value <= key:
+            normalised[str(key)] = value
+    layout = {
+        'capacity': int(capacity) if int(capacity) in CAPACITIES else 4,
+        'columns': normalised,
+        'fill_width': bool(fill_width),
+        'organization': (organization or '')[:80],
+    }
+    for key, value in (('autostart', autostart), ('start_fullscreen', start_fullscreen)):
+        if value is not None:
+            layout[key] = flag(value)
+    return layout
+
+
+def cacheable(snapshot) -> dict:
+    """离线缓存用的副本：剥掉摄像头密码和默认密码。
+
+    缓存落在 QSettings 的明文 ini / plist 里，密码只能留在系统钥匙串。
+    重放这份缓存时 apply_snapshot 不会碰钥匙串，凭据依然可用。
+    """
+    cameras = []
+    for camera in snapshot.get('cameras') or []:
+        cameras.append({key: value for key, value in camera.items() if key != 'password'})
+    defaults = snapshot.get('default_credentials')
+    return {
+        'version': snapshot.get('version', 0),
+        'mode': profile_mode(snapshot),
+        'escape_password_hash': snapshot.get('escape_password_hash') or '',
+        'default_credentials': ({'username': str(defaults.get('username') or '')}
+                                if isinstance(defaults, dict) else None),
+        'profile': dict(snapshot.get('profile') or {}),
+        'layout': dict(snapshot.get('layout') or {}),
+        'cameras': cameras,
+    }
+
+
+def first_sync_direction(snapshot, local_camera_count) -> str:
+    """云端还是空的而本机已经配好，就把本机这份当作模板传上去。"""
+    if not (snapshot.get('cameras') or []) and local_camera_count > 0:
+        return 'upload'
+    return 'download'
+
+
+STARTUP_SWITCHES = ('autostart', 'start_fullscreen')
+
+
+def first_login_switches(snapshot, settings):
+    """首次登录时两个开关各自「开着的一边说了算」，返回 (keep, adopt)。
+
+    新后台下发里总带着这两个键，缺省 false。那个 false 往往谁也没选过，不能拿它
+    把本机勾好的抹掉；云端开着的也不能被本机的缺省 false 顶掉。
+    keep：本机开着、云端关着的键。下发方向照本机留着，再传上去。
+    adopt：云端开着、本机关着的键。上传方向先在本机打开，传上去的就是两边取「或」。
+    云端下发里没有的键（旧后台）两边都不算。
+    """
+    layout = (snapshot or {}).get('layout') or {}
+    keep, adopt = [], []
+    for key in STARTUP_SWITCHES:
+        if key not in layout:
+            continue
+        local, cloud = flag(settings.value(f'monitor/{key}', False)), flag(layout[key])
+        if local and not cloud:
+            keep.append(key)
+        elif cloud and not local:
+            adopt.append(key)
+    return keep, adopt
+
+
+@dataclass
+class AppliedConfig:
+    devices: list = field(default_factory=list)
+    slots: list = field(default_factory=list)
+    streams: dict = field(default_factory=dict)
+    capacity: int = 4
+    organization: str = ''
+    fill_width: bool = False
+    credential_failures: list = field(default_factory=list)
+    mode: str = 'full'
+    fullscreen: bool = False
+    escape_password_hash: str = ''
+    # 完整模式的两个开关；None 表示下发里没有（旧后台），本机设置不动
+    autostart: object = None
+    start_fullscreen: object = None
+
+
+def apply_snapshot(snapshot, names: DeviceNames, options: ConnectionOptions, store) -> AppliedConfig:
+    """把云端配置落到本机存储，并返回界面需要的部分。
+
+    单台摄像头写钥匙串失败（系统安全存储不可用）不应该让整次同步作废，
+    失败的 IP 会记在 credential_failures 里交给调用方提示。
+    """
+    cameras = list(snapshot.get('cameras') or [])
+    raw_layout = snapshot.get('layout') or {}
+    layout = layout_entry(
+        raw_layout.get('capacity', 4),
+        raw_layout.get('columns', {}),
+        raw_layout.get('fill_width', False),
+        raw_layout.get('organization', ''),
+        raw_layout.get('autostart'),
+        raw_layout.get('start_fullscreen'),
+    )
+
+    applied = AppliedConfig(capacity=layout['capacity'],
+                            organization=layout['organization'],
+                            fill_width=layout['fill_width'],
+                            autostart=layout.get('autostart'),
+                            start_fullscreen=layout.get('start_fullscreen'))
+    applied.mode = profile_mode(snapshot)
+    applied.fullscreen = bool((snapshot.get('layout') or {}).get('fullscreen', False))
+    applied.escape_password_hash = str(snapshot.get('escape_password_hash') or '')
+
+    defaults = _default_credentials(snapshot)
+    if defaults is not None:
+        try:
+            if any(defaults):
+                store.save(DEFAULT_CREDENTIAL_ACCOUNT, *defaults)
+            else:
+                store.forget(DEFAULT_CREDENTIAL_ACCOUNT)
+        except CredentialError:
+            applied.credential_failures.append(DEFAULT_CREDENTIAL_ACCOUNT)
+
+    for camera in cameras:
+        ip = str(camera.get('ip', ''))
+        if not ip:
+            continue
+
+        try:
+            names.save(ip, str(camera.get('display_name') or ''))
+        except (OSError, ValueError):
+            pass
+        try:
+            names.save_appearance(ip, camera.get('name_color', '#ffffff'),
+                                  camera.get('name_corner', 'top-left'))
+        except (OSError, ValueError):
+            pass
+        try:
+            options.save_transport(ip, camera.get('transport', 'tcp'))
+        except (OSError, ValueError):
+            pass
+
+        # 与服务端相同的三态：没有 password 键就完全不碰钥匙串。
+        # 离线缓存正是靠这一点——它剥掉了密码，重放时不会把已存的凭据抹掉。
+        if 'password' in camera:
+            username = str(camera.get('username') or '')
+            password = str(camera.get('password') or '')
+            if not (username or password) and defaults and any(defaults):
+                # 后台没单独填的摄像头用点位默认账号；写进钥匙串，断网重启也能播
+                username, password = defaults
+            try:
+                if username or password:
+                    store.save(ip, username, password)
+                else:
+                    # 匿名摄像头不在钥匙串里留空记录
+                    store.forget(ip)
+            except CredentialError:
+                applied.credential_failures.append(ip)
+
+        applied.devices.append(device_from_camera(camera))
+        applied.streams[ip] = {
+            'mode_index': mode_index(camera.get('stream_mode', 'onvif')),
+            'dahua_channel': int(camera.get('dahua_channel') or 1),
+            'manual_url': str(camera.get('manual_url') or ''),
+            'transport': str(camera.get('transport') or 'tcp'),
+        }
+
+    applied.slots = slot_order(cameras)
+    try:
+        names.save_slot_order(applied.slots)
+    except OSError:
+        pass
+
+    _save_layout(names, layout)
+    return applied
+
+
+def _save_layout(names: DeviceNames, layout) -> None:
+    settings = names.settings
+    settings.setValue('monitor/organization', layout['organization'])
+    settings.setValue('monitor/fill_width', layout['fill_width'])
+    settings.setValue('monitor/capacity', layout['capacity'])
+    for key in ('autostart', 'start_fullscreen'):
+        if key in layout:
+            settings.setValue(f'monitor/{key}', layout[key])
+    for capacity in EQUAL_CAPACITIES:
+        key = f'monitor/columns/{capacity}'
+        value = layout['columns'].get(str(capacity))
+        settings.setValue(key, value) if value else settings.remove(key)
+    settings.sync()
+
+
+def config_fingerprint(layout, cameras) -> str:
+    """把「这份配置长什么样」压成一个可比较的串。
+
+    只看内容，不看键的顺序、摄像头的排列先后。用来判断这次要传的东西和上次
+    传上去的是不是一模一样——一样就没必要再传，服务端每收一次都会把版本号加一。
+    """
+    ordered = sorted((dict(camera) for camera in cameras or []),
+                     key=lambda camera: (str(camera.get('ip', '')), int(camera.get('slot_index', 0) or 0)))
+    return json.dumps({'layout': dict(layout or {}), 'cameras': ordered},
+                      ensure_ascii=False, sort_keys=True)

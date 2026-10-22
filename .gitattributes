@@ -1,0 +1,11 @@
+# 换行符：仓库内统一存 LF，Windows 批处理按 CRLF 检出。
+# 不加这一条时，在 Windows 上以 core.autocrlf=false 提交会把 build-macos.sh
+# 变成 CRLF，macOS 上的 release 流程会因为这个 shebang 报错。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.sh text eol=lf
+*.ico binary
+*.png binary
+*.jpg binary

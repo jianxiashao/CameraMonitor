@@ -1,0 +1,14 @@
+# Windows 7 版本的运行时依赖：CPython 3.8 + Qt 5（PySide2）。
+# 主版本（Windows 10/11）用的是 requirements.txt 里的 PySide6 6.8。
+#
+# 每条都要卡死在支持 Python 3.8 的最后一个版本上：
+#   - PySide2 5.15.2.1 是 Qt 5 的最后一版，也是 Windows 7 上唯一能用的 Qt 绑定；
+#   - av 12.3.0 之后不再提供 cp38 轮子（FFmpeg 6）；
+#   - keyring 25 要求 Python 3.9+；
+#   - requests 2.33 起要求 Python 3.10+。
+PySide2==5.15.2.1
+psutil==7.2.2
+defusedxml==0.7.1
+av==12.3.0
+requests==2.32.4
+keyring==24.3.1

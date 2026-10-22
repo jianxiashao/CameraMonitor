@@ -1,0 +1,17 @@
+.venv/
+.venv-win/
+.venv-win7/
+__pycache__/
+*.pyc
+.DS_Store
+.reasonix/
+artifacts/
+build/
+dist/
+build-win/
+dist-win/
+build-win7/
+dist-win7/
+releases/
+*.key
+*.crt
