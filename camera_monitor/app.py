@@ -117,6 +117,8 @@ class Window(QMainWindow):
         self.target_ip = None
         self.target_received = False
         self.devices = {}
+        # 设备超过一屏时按页显示；翻页只换墙上的相机，不改设备清单
+        self.page = 0
         self.networks = []
         self.players = []
         self.wall = None
@@ -182,6 +184,14 @@ class Window(QMainWindow):
         side.addWidget(self.status)
         self.progress=QProgressBar();self.progress.setRange(0,1);self.progress.setValue(0)
         self.progress.setTextVisible(False);self.progress.setFixedHeight(3);side.addWidget(self.progress)
+        # 设备超过一屏时才出现：手动翻页，不自动轮播（免得打断正在盯的画面）
+        pager=QHBoxLayout()
+        self.page_prev=QPushButton('◀ 上一页');self.page_prev.clicked.connect(lambda:self.change_page(-1))
+        self.page_label=QLabel('第 1 / 1 页');self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_next=QPushButton('下一页 ▶');self.page_next.clicked.connect(lambda:self.change_page(1))
+        pager.addWidget(self.page_prev);pager.addWidget(self.page_label,1);pager.addWidget(self.page_next)
+        side.addLayout(pager)
+        for widget in (self.page_prev,self.page_next,self.page_label):widget.hide()
         self.table=DeviceList(compact=True)
         self.table.itemSelectionChanged.connect(self.show_details)
         self.table.cellDoubleClicked.connect(lambda row,column:self.open_player())
@@ -771,9 +781,60 @@ class Window(QMainWindow):
         for row in range(self.table.rowCount()):
             if self.table.item(row, 0).text() == ip:
                 self.table.setCellText(row, 1, self.device_names.display(self.devices[ip]))
-        self.wall.update_devices(list(self.devices.values()))
+        self.wall.update_devices(self.page_devices())
+        self.refresh_pager()
         self.filter_devices(self.device_filter.text())
         if self.table.currentRow() >= 0:self.show_details()
+
+    def page_size(self):
+        """一页放几路：跟着监控墙的格数走。"""
+        return max(1, self.wall.capacity if self.wall else 25)
+
+    def page_count(self):
+        return max(1, (len(self.devices) + self.page_size() - 1) // self.page_size())
+
+    def page_devices(self):
+        """当前页要上墙的设备；不超过一页时就是全部。"""
+        ordered = list(self.devices.values())
+        size = self.page_size()
+        self.page = max(0, min(self.page, self.page_count() - 1))
+        return ordered[self.page * size:(self.page + 1) * size]
+
+    def apply_page_to_wall(self):
+        """把当前页的相机摆到墙上：不在本页的移出，缺的补上。
+
+        已经在本页的格子不动（不重连、不断流）；翻到别的页时才会换一批。
+        """
+        if self.wall is None:
+            return
+        devices = self.page_devices()
+        wanted = {device.ip for device in devices}
+        for tile in list(self.wall.tiles):
+            if tile.player.device.ip not in wanted:
+                self.wall.remove_tile(tile)
+        for device in devices:
+            if not any(tile.player.device.ip == device.ip for tile in self.wall.tiles):
+                self.wall.add_device(device)
+        self.wall.arrange([device.ip for device in devices])
+
+    def change_page(self, delta):
+        """手动翻页：超过一屏时才有意义。切页只换墙上的相机，不重连不打断别的页。"""
+        count = self.page_count()
+        if count <= 1:
+            return
+        self.page = (self.page + delta) % count
+        self.apply_page_to_wall()
+        self.refresh_pager()
+        self.status.setText(f'第 {self.page + 1} / {count} 页 · 共 {len(self.devices)} 台设备')
+
+    def refresh_pager(self):
+        if not hasattr(self, 'page_label'):
+            return
+        count = self.page_count()
+        self.page = max(0, min(self.page, count - 1))
+        for widget in (self.page_prev, self.page_next, self.page_label):
+            widget.setVisible(count > 1)
+        self.page_label.setText(f'第 {self.page + 1} / {count} 页')
 
     def add_device(self, device: Device):
         row = list(self.devices).index(device.ip) if device.ip in self.devices else self.table.rowCount()
@@ -785,7 +846,8 @@ class Window(QMainWindow):
         for column, text in enumerate((device.ip, self.device_names.display(device), device.model or '未提供', ' + '.join(device.protocols), '已发现 · 未验证视频')):
             self.table.setCellText(row, column, text)
         self.status.setText(f'已发现 {len(self.devices)} 台设备')
-        self.wall.update_devices(list(self.devices.values()))
+        self.wall.update_devices(self.page_devices())
+        self.refresh_pager()
         self.filter_devices(self.device_filter.text())
         if self.table.currentRow() == row:
             self.show_details()
@@ -839,7 +901,8 @@ class Window(QMainWindow):
         else:self.show_settings(tile.player)
 
     def open_multiview(self):
-        self.wall.update_devices(list(self.devices.values()))
+        self.wall.update_devices(self.page_devices())
+        self.refresh_pager()
         self.wall.show()
 
     def release_multiview(self,result):
@@ -1138,7 +1201,8 @@ class Window(QMainWindow):
                 for column,text in enumerate((device.ip,self.device_names.display(device),
                         device.model or '未提供',' + '.join(device.protocols),'已发现 · 未验证视频')):
                     self.table.setCellText(row,column,text)
-            self.wall.update_devices(list(self.devices.values()))
+            self.wall.update_devices(self.page_devices())
+            self.refresh_pager()
             self.wall.saved_slots=self.device_names.slot_order()
             wanted=set(self.devices)
             for tile in list(self.wall.tiles):

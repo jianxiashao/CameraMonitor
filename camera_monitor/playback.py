@@ -272,6 +272,10 @@ class VideoSurface(QLabel):
         self.clear()
         self.setText(text)
 
+    def current_image(self):
+        """当前显示的画面（没有就是 None）；环形录像取的就是它。"""
+        return self._image
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._image is not None: self.show_frame(self._image)

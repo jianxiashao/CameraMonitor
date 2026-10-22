@@ -79,9 +79,11 @@ class CameraTile(QFrame):
         self.start=QPushButton('连接');self.start.clicked.connect(self.player.connect_camera)
         self.stop=QPushButton('停止');self.stop.clicked.connect(self.player.stop_playback)
         self.settings=QPushButton('设置');self.settings.clicked.connect(self.show_settings)
+        self.replay=QPushButton('回看');self.replay.setToolTip('看这台相机最近几分钟的缩时画面')
+        self.replay.clicked.connect(self.show_recording)
         self.expand=QPushButton('放大');self.expand.clicked.connect(lambda:self.monitor.toggle_focus(self))
         self.remove=QPushButton('移除');self.remove.clicked.connect(lambda:self.remove_requested.emit(self))
-        for button in (self.start,self.stop,self.settings,self.expand,self.remove):
+        for button in (self.start,self.stop,self.settings,self.replay,self.expand,self.remove):
             actions.addWidget(button)
             button.installEventFilter(self)
         self.more=QPushButton('操作')
@@ -89,6 +91,7 @@ class CameraTile(QFrame):
         menu.addAction('连接',self.player.connect_camera)
         menu.addAction('停止',self.player.stop_playback)
         menu.addAction('连接设置',self.show_settings)
+        menu.addAction('最近几分钟回看',self.show_recording)
         menu.addAction('放大 / 返回',lambda:self.monitor.toggle_focus(self))
         menu.addAction('移除',lambda:self.remove_requested.emit(self))
         self.more.setMenu(menu);actions.addWidget(self.more);self.more.installEventFilter(self)
@@ -228,6 +231,14 @@ class CameraTile(QFrame):
             self.settings_requested.emit(self.player);return
         self.player.show();self.player.raise_();self.player.activateWindow()
 
+    def show_recording(self):
+        """回看这台相机最近几分钟的缩时画面。"""
+        from .recording_view import RecordingViewer
+        segments = self.monitor.recorders.segments(self.player.device.ip)
+        title = f'{self.monitor.device_names.display(self.player.device)} · {self.player.device.ip}'
+        viewer = RecordingViewer(title, segments, self)
+        viewer.exec()
+
     def sync_controls(self):
         busy=self.player.busy()
         narrow=self.player.surface.width()<280
@@ -295,6 +306,13 @@ class MultiView(QDialog):
         self.locked=False
         self.layout_mode=self.capacity
         self.focused_tile=None
+        # 环形录像：每秒给正在播放的画面存一帧缩时画面，保留最近 10 分钟
+        from .recorder import RecorderPool
+        self.recorders=RecorderPool()
+        self.recorder_timer=QTimer(self)
+        self.recorder_timer.setInterval(1000)
+        self.recorder_timer.timeout.connect(self.capture_recording)
+        self.recorder_timer.start()
         self.layout_timer=QTimer(self)
         self.layout_timer.setSingleShot(True)
         self.layout_timer.timeout.connect(self.relayout)
@@ -708,8 +726,19 @@ class MultiView(QDialog):
         self.reconnect_timer.stop()
         self.connect_all()
 
+    def capture_recording(self):
+        """每秒给正在播放的画面存一帧（缩时录像，宽度压到 480）。"""
+        if self.closing:
+            return
+        for tile in list(self.tiles):
+            image = tile.player.surface.current_image()
+            if image is not None:
+                self.recorders.add(tile.player.device.ip, image)
+
     def stop_everything(self):
         self.reconnect_timer.stop()
+        self.recorder_timer.stop()
+        self.recorders.close()
         for tile in self.tiles:tile.player.stop_playback()
 
     def reject(self):
