@@ -389,13 +389,11 @@ class MultiView(QDialog):
         self.start_all=QPushButton('一键重连')
         self.start_all.setToolTip('先停掉全部画面，等网络线程收尾后重新连接。摄像头断网、换过密码之后用这个。')
         self.start_all.clicked.connect(self.reconnect_all)
-        toolbar.addWidget(self.start_all)
         self.stop_all=QPushButton('一键断开')
         self.stop_all.setToolTip('停掉全部画面，不改动任何配置。')
         self.stop_all.clicked.connect(self.stop_everything)
-        toolbar.addWidget(self.stop_all)
         # 巡检：一键检测 + 巡检截图 收进一个下拉菜单
-        self.patrol=QPushButton('巡检')
+        self.patrol=QPushButton('巡检功能')
         self.patrol.setToolTip('一键检测：逐路重新取画面并汇总状态\n巡检截图：把每路当前画面存成图片')
         self.patrol_menu=QMenu(self.patrol)
         self.patrol.setMenu(self.patrol_menu)
@@ -404,7 +402,6 @@ class MultiView(QDialog):
         self.screenshot_action=self.patrol_menu.addAction('巡检截图')
         self.screenshot_action.setToolTip('把每路当前画面存成图片，统一放进当天的日期文件夹')
         self.screenshot_action.triggered.connect(lambda: self.patrol_screenshot_requested.emit())
-        toolbar.addWidget(self.patrol)
         toolbar.addStretch()
         # 右侧设置区：云端同步 / 机构名称 / 大屏密码 / 启动开关 / 设置 / 全屏。
         # 全部塞进一个右对齐容器，上层按位置插入即可，保证同一行、统一靠右
@@ -413,6 +410,9 @@ class MultiView(QDialog):
         self.right_layout.setContentsMargins(0,0,0,0)
         self.right_layout.setSpacing(6)
         toolbar.addWidget(self.toolbar_right)
+        # 一键重连 / 一键断开 / 巡检功能 和后面的云端同步一起，整组右对齐排在同一条线上
+        for widget in (self.start_all, self.stop_all, self.patrol):
+            self.right_layout.addWidget(widget)
         # 设置：原来侧边栏「更多操作」里的功能都收进这个菜单
         self.settings_button=QPushButton('设置')
         self.settings_menu=QMenu(self.settings_button)
