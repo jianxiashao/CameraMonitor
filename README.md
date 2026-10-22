@@ -113,3 +113,5 @@ python -m camera_monitor.app
 ```
 
 支持在 Windows / Apple 芯片 Mac 本地打包，也可使用仓库中的 GitHub Actions 云端构建。详见 [Windows 打包说明](packaging/Windows使用说明.md)与 [macOS 打包说明](packaging/macOS使用说明.md)。Windows 7 需要用 Python 3.8 + PySide2 单独打包（`.github/workflows/windows-win7.yml`），见 [Windows 7 使用说明](packaging/Windows7使用说明.md)。
+
+要把源码上传到自己的 GitHub 仓库并让 Actions 产出可下载的 exe，见 [上传到 GitHub 说明](上传GitHub使用说明.md)。
