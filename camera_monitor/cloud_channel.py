@@ -39,7 +39,7 @@ class CloudChannel(QObject):
 
     def __init__(self, url, hello, parent=None, backoff=BACKOFF_SECONDS,
                  heartbeat_ms=HEARTBEAT_MS, silence_limit=SILENCE_LIMIT_SECONDS,
-                 jitter=lambda: random.uniform(0.8, 1.2), clock=time.monotonic):
+                 jitter=lambda: random.uniform(0.8, 1.2), clock=time.monotonic, health=None):
         super().__init__(parent)
         self.url = url
         # 每次连上时现取：令牌会被静默重登换掉
@@ -48,6 +48,9 @@ class CloudChannel(QObject):
         self.silence_limit = silence_limit
         self.jitter = jitter
         self.clock = clock
+        # 心跳里捎带现场状态（每路延迟、黑屏、重连次数、机器负载）：
+        # 后台才能看出"在线但画面全黑/延迟很高"，而不只是"在线"
+        self.health = health
         self.running = False
         self.online = False
         self.attempt = 0
@@ -165,7 +168,15 @@ class CloudChannel(QObject):
             self.socket.abort()
             return
         # 欢迎之前服务端只认 hello，发别的会被直接关掉：未上线时只做静默检查
-        self.send({'type': 'ping'})
+        payload = {'type': 'ping'}
+        if self.health is not None:
+            try:
+                snapshot = self.health()
+            except Exception:
+                snapshot = None
+            if snapshot:
+                payload['health'] = snapshot
+        self.send(payload)
 
     def _log_once(self, text):
         if text and text != self._last_error:

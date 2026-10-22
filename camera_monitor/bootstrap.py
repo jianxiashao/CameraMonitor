@@ -23,6 +23,32 @@ LOG_FILE = 'camera_monitor.log'
 LOG_MAX_BYTES = 1024 * 1024
 LOG_BACKUPS = 3
 
+# 守护模式：父进程盯着子进程，异常退出就重新拉起。无人值守的大屏需要这个
+WATCHDOG_FLAG = '--watchdog'
+RESTART_DELAY_SECONDS = 5
+
+
+def watchdog_command():
+    """守护模式要反复拉起的命令（去掉守护标记，否则会无限套娃）。"""
+    extra = [arg for arg in sys.argv[1:] if arg != WATCHDOG_FLAG]
+    if getattr(sys, 'frozen', False):
+        return [sys.executable] + extra
+    return [sys.executable, '-m', 'camera_monitor.app'] + extra
+
+
+def run_watchdog():
+    """一直守着子进程：异常退出就重新拉起，用户正常关闭（返回 0）才结束。"""
+    import subprocess
+    import time
+
+    command = watchdog_command()
+    while True:
+        code = subprocess.call(command)
+        if code == 0:
+            return 0
+        logger.warning('程序异常退出（返回码 %s），%d 秒后重新拉起', code, RESTART_DELAY_SECONDS)
+        time.sleep(RESTART_DELAY_SECONDS)
+
 
 def allow_session_quit(app, window):
     """关机、注销时放行关闭窗口。
@@ -60,6 +86,8 @@ def log_startup(argv):
 
 
 def main():
+    if WATCHDOG_FLAG in sys.argv:
+        sys.exit(run_watchdog())
     app = QApplication(sys.argv)
     app.setApplicationName('Camera Monitor')
     # 要在设好程序名之后取目录，否则会落到没有程序名的公共目录里。

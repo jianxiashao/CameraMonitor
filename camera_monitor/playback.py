@@ -1,6 +1,7 @@
 """Video-only RTSP preview with bounded network waits and latest-frame rendering."""
 from __future__ import annotations
 from .choices import ChoiceButton as QComboBox
+import logging
 import random
 import threading
 import time
@@ -19,6 +20,11 @@ from .streams import OnvifClient, Stream, StreamError, authenticated_url, same_d
 
 # FFmpeg errors can include credential-bearing URLs. UI uses authored messages only.
 av.logging.set_level(av.logging.PANIC)
+
+logger = logging.getLogger(__name__)
+
+# 设备时间与本机差这么多秒就提示：ONVIF 摘要认证靠设备时间，差太多会登录失败
+CLOCK_SKEW_WARN_SECONDS = 300
 
 # FFmpeg 默认要探测 5MB / 5 秒才开始解，监控画面用不着这么谨慎：调小之后首帧
 # 更快。实测大华主码流，交替采样各 8 次，中位数 1.59 秒降到 1.34 秒。
@@ -77,6 +83,7 @@ class Decoder(QThread):
         self.received = False
         self._last_latency_report = 0.0
         self._black_watch = alerts.BlackScreenWatch()
+        self._freeze_watch = alerts.FreezeWatch()
 
     def take_frame(self):
         with self._lock:
@@ -139,13 +146,21 @@ class Decoder(QThread):
                                 data = bytes(plane)
                                 image = QImage(data, width, height, plane.line_size, QImage.Format.Format_RGB888)
                                 with self._lock: self._frame = image
-                                # 顺手判断黑屏：连上了却一直是黑画面是现场最常见的问题之一
-                                state = self._black_watch.observe(
-                                    alerts.sample_is_black(data, width, height, plane.line_size))
+                                # 顺手判断黑屏/冻结：连上了却一直是黑画面或一直不动，都是现场常见问题
+                                is_black = alerts.sample_is_black(data, width, height, plane.line_size)
+                                state = self._black_watch.observe(is_black)
                                 if state == 'alert':
                                     self.alert.emit('画面可能全黑：请检查镜头是否被遮挡、红外是否开启、相机是否通电')
                                 elif state == 'clear':
+                                    self._freeze_watch.reset()
                                     self.alert.emit('')
+                                else:
+                                    finger = alerts.sample_fingerprint(data, width, height, plane.line_size)
+                                    frozen = self._freeze_watch.observe(finger, time.monotonic())
+                                    if frozen == 'alert':
+                                        self.alert.emit('画面可能卡住：内容长时间没有变化，请检查相机或网络')
+                                    elif frozen == 'clear':
+                                        self.alert.emit('')
                                 now = time.monotonic()
                                 if now - self._last_latency_report >= LATENCY_REPORT_INTERVAL:
                                     self._last_latency_report = now
@@ -206,12 +221,15 @@ class ResolveWorker(QThread):
         self.device = device
         self.username, self.password = username, password
         self.cancel = threading.Event()
+        # ONVIF 认证要用设备时间；偏差过大时登录会莫名失败，带上去给界面提示
+        self.clock_skew = 0.0
 
     def run(self):
         client = None
         try:
             client = OnvifClient(self.device, self.username, self.password, self.cancel)
             streams = client.streams()
+            self.clock_skew = float(getattr(client, 'offset', 0.0) or 0.0)
             if not self.cancel.is_set():
                 self.resolved.emit(streams)
         except StreamError as exc:
@@ -325,6 +343,8 @@ class PlayerWindow(QDialog):
         self.preview_width=1920
         self.decoder = None
         self.resolver = None
+        # 本次播放累计断线重连次数，云端心跳要用它判断现场是否稳定
+        self.reconnect_count = 0
         self.stopping = False
         self.rendering = False
         self.setWindowTitle(f'实时预览 · {device.ip}')
@@ -586,6 +606,11 @@ class PlayerWindow(QDialog):
         self.profiles.clear()
         for stream in streams: self.profiles.addItem(stream.name, stream)
         if streams: self.start_decoder(streams[0])
+        skew = int(getattr(self.resolver, 'clock_skew', 0) or 0)
+        if abs(skew) >= CLOCK_SKEW_WARN_SECONDS:
+            # ONVIF 用设备时间做摘要认证：差太多会登录失败，先提醒校准相机时间
+            self.set_status(f'设备时间与本机差 {skew} 秒，登录可能失败，请校准相机时间')
+            logger.warning('%s 设备时间偏差 %d 秒', self.device.ip, skew)
 
     def resolve_finished(self):
         if self.stopping:
@@ -623,6 +648,7 @@ class PlayerWindow(QDialog):
 
     def on_recovering(self, message):
         if not self.stopping:
+            self.reconnect_count += 1
             self.rendering = False
             self.surface.reset(message)
             self.set_status(message)

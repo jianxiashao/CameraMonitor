@@ -1,4 +1,5 @@
 """Independent camera players arranged in a 4/9 tile monitor wall."""
+import logging
 import time
 
 from PySide6.QtCore import Qt,QTimer,Signal,QEvent,QMimeData
@@ -14,6 +15,8 @@ from .wall_layout import wall_rectangles, DEFAULT_COLUMNS
 # 一键重连最多等上一轮网络线程收尾多久。摄像头掉线时 stop 要等读超时跑完；
 # 等过这个点就不再陪着卡住的那一格，先把已经空出来的连上。
 RECONNECT_WAIT_SECONDS = 12
+
+logger = logging.getLogger(__name__)
 
 # 傻瓜模式下画面上的这些鼠标动作一律吞掉：现场不能放大、拖动、点开菜单
 LOCKED_EVENTS=(QEvent.Type.MouseButtonPress,QEvent.Type.MouseButtonRelease,QEvent.Type.MouseButtonDblClick,
@@ -68,6 +71,9 @@ class CameraTile(QFrame):
         self.alert_badge.setStyleSheet('color:#fff;background:rgba(185,28,28,220);font-size:12px;padding:3px 8px;border-radius:3px;')
         self.alert_badge.hide()
         self.player.alert_changed.connect(self.show_alert)
+        # 供云端心跳读取的最近状态
+        self.last_latency = None
+        self.alert_message = ''
         self.status=QLabel('待连接',self)
         self.status.setStyleSheet('background:transparent; color:#8191a5; font-size:12px;')
         self.status.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
@@ -127,6 +133,7 @@ class CameraTile(QFrame):
 
         阈值与 live_edge 的追帧策略对齐：0.5 秒以内看不出来，2 秒以上已经在查账了。
         """
+        self.last_latency = behind
         if behind < 0.5:
             color,text='#15803d',f'实时 {behind:.1f}s'
         elif behind < 2.0:
@@ -139,6 +146,10 @@ class CameraTile(QFrame):
 
     def show_alert(self,message):
         """画面异常的红条，空字符串表示恢复正常。"""
+        if message != self.alert_message:
+            self.alert_message = message
+            # 只在上报内容变化时发信号：黑屏期间每帧都会走到这里
+            self.monitor.camera_alert.emit(self.player.device.ip, message)
         if not message:
             self.alert_badge.hide()
             return
@@ -285,6 +296,8 @@ class MultiView(QDialog):
     playing=Signal(str)
     layout_changed=Signal()
     device_status=Signal(str,str)
+    # 画面异常（黑屏、冻结）发生或恢复；空字符串表示恢复
+    camera_alert=Signal(str,str)
     fullscreen_requested=Signal()
     tile_removing=Signal(object)
     settings_requested=Signal(object)
@@ -730,6 +743,13 @@ class MultiView(QDialog):
     def capture_recording(self):
         """每秒给正在播放的画面存一帧（缩时录像，宽度压到 480）。"""
         if self.closing:
+            return
+        if self.recorders.stopped_reason:
+            # 磁盘不够了：提示一次，然后不再录
+            if not getattr(self, 'recording_warned', False):
+                self.recording_warned = True
+                self.message.setText(self.recorders.stopped_reason)
+                logger.warning('%s', self.recorders.stopped_reason)
             return
         for tile in list(self.tiles):
             image = tile.player.surface.current_image()

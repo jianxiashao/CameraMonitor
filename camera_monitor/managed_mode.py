@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import platform
+import subprocess
 import sys
 import time
 
@@ -156,6 +157,9 @@ class ManagedController(QObject):
         self.status_timer = QTimer(self)
         self.status_timer.setInterval(STATUS_TICK_MS)
         self.status_timer.timeout.connect(self.report_status)
+        # 定时巡检截图：后台下发 start_patrol 后按间隔自动传大屏图
+        self.patrol_timer = QTimer(self)
+        self.patrol_timer.timeout.connect(self.patrol_tick)
 
         self.shortcut = QShortcut(QKeySequence(escape_keys()), window)
         self.shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
@@ -297,6 +301,12 @@ class ManagedController(QObject):
             'capture_screen': self.cmd_capture_screen,
             'reconnect_all': self.cmd_reconnect_all,
             'restart_app': self.cmd_restart_app,
+            'get_status': self.cmd_get_status,
+            'get_diagnostics': self.cmd_get_diagnostics,
+            'set_layout': self.cmd_set_layout,
+            'start_patrol': self.cmd_start_patrol,
+            'stop_patrol': self.cmd_stop_patrol,
+            'reboot': self.cmd_reboot,
         }.get(name)
         if handler is None:
             self.ack(command_id, False, 'UNKNOWN_COMMAND')
@@ -322,10 +332,12 @@ class ManagedController(QObject):
             message['error'] = error
         self.channel.send(message)
 
-    def done(self, command_id, ok=True, error=''):
+    def done(self, command_id, ok=True, error='', data=None):
         message = {'type': 'command_done', 'id': command_id, 'ok': ok}
         if error:
             message['error'] = error
+        if data is not None:
+            message['data'] = data
         self.channel.send(message)
 
     def cmd_scan(self, command_id, args):
@@ -443,6 +455,90 @@ class ManagedController(QObject):
         self.window.authorized_quit = True
         # 留一点时间让消息发出去；挂在自己身上，控制器先没了就不再退出
         QTimer.singleShot(300, self, self.quit_app)
+
+    def cmd_get_status(self, command_id, args):
+        """回传现场状态：每路是否在播、延迟、异常、重连次数，以及机器负载。"""
+        self.ack(command_id, True)
+        health = {}
+        try:
+            health = self.window.camera_health() or {}
+        except Exception:
+            logger.exception('汇总现场状态失败')
+        self.done(command_id, True, '', data=health)
+
+    def cmd_get_diagnostics(self, command_id, args):
+        """回传排障文本：系统信息 + 各路连接诊断。比让现场人员导 zip 快得多。"""
+        self.ack(command_id, True)
+        lines = []
+        try:
+            from .diagnostics import system_summary
+            lines.append(system_summary())
+            lines.append('')
+        except Exception:
+            logger.exception('生成系统信息失败')
+        for player in list(getattr(self.window, 'players', [])):
+            lines.append(f'=== {player.device.ip} ===')
+            try:
+                detail = player.connection_diagnostics.toPlainText()[-1500:]
+            except AttributeError:
+                detail = ''
+            lines.append(detail or '（这一路还没有诊断日志）')
+            lines.append('')
+        # 太长会被服务端丢掉；只留最后 8000 字
+        self.done(command_id, True, '', data='\n'.join(lines)[-8000:])
+
+    def cmd_set_layout(self, command_id, args):
+        """后台切换分屏格数（4/9/12/16/20/25…）。"""
+        try:
+            capacity = int(args.get('capacity'))
+        except (TypeError, ValueError):
+            self.done(command_id, False, 'BAD_ARGUMENT')
+            return
+        if not self.window.wall.change_layout(capacity):
+            self.done(command_id, False, 'UNSUPPORTED_LAYOUT')
+            return
+        self.done(command_id, True)
+
+    def cmd_start_patrol(self, command_id, args):
+        """按固定间隔自动上传大屏截图（巡检）。间隔秒数由后台给，最短 30 秒。"""
+        try:
+            every = int(args.get('every') or 300)
+        except (TypeError, ValueError):
+            every = 300
+        every = max(30, every)
+        self.patrol_timer.start(every * 1000)
+        logger.info('开始定时巡检截图，每 %d 秒一次', every)
+        self.done(command_id, True, '', data={'every': every})
+
+    def cmd_stop_patrol(self, command_id, args):
+        self.patrol_timer.stop()
+        logger.info('已停止定时巡检截图')
+        self.done(command_id, True)
+
+    def cmd_reboot(self, command_id, args):
+        """重启现场电脑。必须显式带 confirm=yes，避免误触把大屏关掉。"""
+        if str(args.get('confirm') or '') != 'yes':
+            self.done(command_id, False, 'CONFIRM_REQUIRED')
+            return
+        self.ack(command_id, True)
+        command = (['shutdown', '/r', '/t', '60'] if sys.platform == 'win32'
+                   else ['shutdown', '-r', '+1'])
+        try:
+            subprocess.Popen(command)
+        except OSError:
+            logger.exception('重启命令执行失败')
+            self.done(command_id, False, 'REBOOT_FAILED')
+            return
+        logger.warning('按后台指令重启电脑，1 分钟后执行')
+        self.done(command_id, True)
+
+    def patrol_tick(self):
+        """巡检定时器到点：传一张大屏截图。离线时跳过，等下次。"""
+        if not self.active:
+            self.patrol_timer.stop()
+            return
+        if self.channel.online:
+            self.uploader.submit('screen', self.window.grab().toImage())
 
     def on_thumbnail(self, ip, image, status):
         if not self.active:

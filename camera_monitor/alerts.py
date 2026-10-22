@@ -59,3 +59,61 @@ class BlackScreenWatch:
     def reset(self):
         self.dark = 0
         self.alerting = False
+
+
+# 画面连续这么多秒一模一样，就当它卡住了（编码器挂死、网络半通时很常见）
+FREEZE_SECONDS = 15
+
+
+def sample_fingerprint(plane, width, height, stride):
+    """取 8×8 个采样点拼成指纹，用来判断画面内容有没有变化。"""
+    if width <= 0 or height <= 0 or not plane or len(plane) < height * stride:
+        return b''
+    step_x = max(1, width // SAMPLE_STEPS)
+    step_y = max(1, height // SAMPLE_STEPS)
+    samples = bytearray()
+    for y in range(0, height, step_y):
+        row = y * stride
+        for x in range(0, width, step_x):
+            offset = row + x * 3
+            if offset + 2 < len(plane):
+                samples += plane[offset:offset + 3]
+    return bytes(samples)
+
+
+class FreezeWatch:
+    """画面长时间没变化就报一次；一旦有变化就清除。
+
+    和黑屏告警互补：黑屏是"一直全黑"，冻结是"一直同一幅画面"。
+    """
+
+    def __init__(self, seconds=FREEZE_SECONDS):
+        self.seconds = max(1.0, seconds)
+        self.fingerprint = None
+        self.since = None
+        self.alerting = False
+
+    def observe(self, fingerprint, now):
+        """喂一帧的指纹，返回 'alert' / 'clear' / None。"""
+        if not fingerprint:
+            return None
+        if fingerprint != self.fingerprint:
+            changed = self.alerting
+            self.fingerprint = fingerprint
+            self.since = now
+            if changed:
+                self.alerting = False
+                return 'clear'
+            return None
+        if self.since is None:
+            self.since = now
+            return None
+        if not self.alerting and now - self.since >= self.seconds:
+            self.alerting = True
+            return 'alert'
+        return None
+
+    def reset(self):
+        self.fingerprint = None
+        self.since = None
+        self.alerting = False

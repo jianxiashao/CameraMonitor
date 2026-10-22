@@ -213,6 +213,7 @@ class Window(QMainWindow):
         more_menu.addAction('导入配置…', self.import_config_file)
         more_menu.addSeparator()
         self.theme_action=more_menu.addAction(theme.label(theme.current()), self.toggle_theme)
+        more_menu.addAction('每天自动重启…', self.configure_restart_hour)
         more.setMenu(more_menu)
         self.cloud_panel=CloudPanel()
         self.cloud_panel.login_requested.connect(self.cloud_login)
@@ -244,6 +245,7 @@ class Window(QMainWindow):
             connection_options=self.connection_options)
         self.wall.playing.connect(self.video_verified)
         self.wall.device_status.connect(self.update_device_status)
+        self.wall.camera_alert.connect(self.on_camera_alert)
         self.wall.fullscreen_requested.connect(self.toggle_fullscreen)
         self.wall.finished.connect(self.release_multiview)
         self.wall.settings_requested.connect(self.show_settings)
@@ -280,6 +282,10 @@ class Window(QMainWindow):
         self.table.thumbnailClicked.connect(self.show_thumbnail)
         self.thumbnail_timer=QTimer(self);self.thumbnail_timer.setInterval(2500)
         self.thumbnail_timer.timeout.connect(self.refresh_live_thumbnails);self.thumbnail_timer.start()
+        # 每天固定时间自动重启一次（内存/句柄缓慢增长的兜底），默认关闭
+        self.restart_check_timer=QTimer(self);self.restart_check_timer.setInterval(10*60*1000)
+        self.restart_check_timer.timeout.connect(self.check_scheduled_restart)
+        self.restart_check_timer.start()
         self.password_settings=QPushButton('大屏密码')
         self.password_settings.clicked.connect(self.show_password_settings)
         self.wall.toolbar_widget.layout().addWidget(self.password_settings)
@@ -309,13 +315,15 @@ class Window(QMainWindow):
         self.cloud.storage_unavailable.connect(self.cloud_storage_unavailable)
         self.cloud.startup_switches_changed.connect(self.cloud_startup_switches_changed)
         self.channel=CloudChannel(channel_url(getattr(self.cloud.client,'base_url',DEFAULT_BASE_URL)),
-            self.channel_hello,parent=self)
+            self.channel_hello,parent=self,health=self.camera_health)
         self.channel.message.connect(self.on_channel_message)
         self.channel.denied.connect(self.on_channel_denied)
         self.channel.replaced.connect(self.on_channel_replaced)
         # 被别处顶掉之后，只有人亲手重新登录成功才重连；静默重登不算（见 on_channel_replaced）
         self.channel_replaced=False
         self.manual_login=False
+        # 通道离线期间的画面异常事件：等重新连上再补发，最多留 20 条
+        self.pending_events=[]
         self.snapshot_uploader=SnapshotUploader(self.upload_snapshot,self)
         self.managed=ManagedController(self,self.channel,self.snapshot_uploader,self.autostart)
         # 同样只用绑定方法：device_names 的生命周期可能比窗口长
@@ -621,6 +629,43 @@ class Window(QMainWindow):
         # 画面区用的是内联样式，主题变了要挨个刷新一遍
         for surface in self.findChildren(VideoSurface):
             surface.refresh_theme()
+
+    def check_scheduled_restart(self):
+        """每天固定时间重启一次：长期运行内存/句柄缓慢增长时的兜底，默认关闭。"""
+        settings = self.device_names.settings
+        try:
+            hour = int(settings.value('monitor/restart_hour', -1))
+        except (TypeError, ValueError):
+            return
+        if not 0 <= hour <= 23:
+            return
+        now = datetime.now()
+        if now.hour != hour:
+            return
+        today = now.strftime('%Y-%m-%d')
+        if settings.value('monitor/restart_day', '') == today:
+            return                      # 今天已经重启过
+        settings.setValue('monitor/restart_day', today)
+        settings.sync()
+        logger.info('按计划在每天 %d 点重启一次', hour)
+        from .managed_mode import restart_application
+        restart_application()
+
+    def configure_restart_hour(self):
+        """设置每天自动重启的小时；-1 表示关闭。"""
+        settings = self.device_names.settings
+        try:
+            current = int(settings.value('monitor/restart_hour', -1))
+        except (TypeError, ValueError):
+            current = -1
+        hour, ok = QInputDialog.getInt(self, '每天自动重启',
+                                       '每天几点重启（0-23 点；填 -1 表示关闭）：', current, -1, 23)
+        if not ok:
+            return
+        settings.setValue('monitor/restart_hour', hour)
+        settings.sync()
+        QMessageBox.information(self, '每天自动重启',
+                                '已关闭自动重启' if hour < 0 else f'已设置：每天 {hour}:00 自动重启一次')
 
     def export_diagnostics(self):
         """把日志、脱敏设置、各路诊断打成一个 zip，交给维护人员。"""
@@ -1058,13 +1103,66 @@ class Window(QMainWindow):
         if mode=='managed':self.managed.enter()
         else:self.managed.leave()
 
+    def camera_health(self):
+        """云端心跳用的现场快照：每路状态 + 机器负载。
+
+        后台通常只能看到"在线"，看不出"在线但画面全黑 / 延迟 8 秒"。
+        这些数据本地本来就有（延迟指示灯、黑屏告警、重连计数），捎带上去即可。
+        """
+        cameras = []
+        for tile in (self.wall.tiles if self.wall is not None else []):
+            player = tile.player
+            cameras.append({
+                'ip': player.device.ip,
+                'playing': bool(getattr(player, 'rendering', False)),
+                'behind': round(tile.last_latency, 1) if tile.last_latency is not None else None,
+                'alert': tile.alert_message or '',
+                'reconnects': int(getattr(player, 'reconnect_count', 0)),
+            })
+        health = {'cameras': cameras, 'managed': bool(self.managed.active)}
+        try:
+            import psutil
+            health['cpu'] = round(psutil.cpu_percent(interval=None), 1)
+            health['mem_mb'] = int(psutil.virtual_memory().used / (1024 ** 2))
+        except Exception:
+            # 拿不到系统指标不影响上报，少两个字段而已
+            pass
+        return health
+
+    def on_camera_alert(self, ip, message):
+        """画面异常（黑屏/冻结）上报云端；通道离线时排队，恢复后补发。"""
+        logger.info('画面异常 %s：%s', ip, message or '恢复正常')
+        if message and self.wall is not None:
+            # 事发片段先落盘：环形缓冲只留 10 分钟，等后台来问早就滚掉了
+            saved = self.wall.recorders.freeze(ip)
+            if saved:
+                logger.info('已保存 %d 段事发录像：%s', len(saved), os.path.dirname(saved[0]))
+        if not self.cloud.token:
+            return      # 纯单机，不外发
+        event = {'type': 'event', 'event': 'camera_alert', 'ip': ip,
+                 'message': message, 'at': int(time.time())}
+        if self.channel.online and self.channel.send(event):
+            return
+        self.pending_events.append(event)
+        del self.pending_events[:-20]
+
+    def flush_pending_events(self):
+        """通道恢复后把离线期间攒下的事件补发出去。"""
+        while self.pending_events and self.channel.online:
+            event = self.pending_events.pop(0)
+            if not self.channel.send(event):
+                self.pending_events.insert(0, event)
+                return
+
     def channel_hello(self):
         if not self.cloud.token:return None
         return {'token':self.cloud.token,'client_uid':self.cloud.client_uid(),'app_version':__version__}
 
     def on_channel_message(self,payload):
         kind=payload.get('type')
-        if kind in ('welcome','config_changed'):self.cloud.note_remote_version(payload.get('version',0))
+        if kind in ('welcome','config_changed'):
+            self.cloud.note_remote_version(payload.get('version',0))
+            if kind=='welcome':self.flush_pending_events()
         elif kind=='command':self.managed.run_command(payload)
         elif kind=='revoked':
             if self.managed.active:

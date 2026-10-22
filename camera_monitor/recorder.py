@@ -4,6 +4,7 @@
 文件放在系统临时目录，按 1 分钟一段滚动删除，退出后不保证保留。
 """
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -17,6 +18,10 @@ DEFAULT_MINUTES = 10
 DEFAULT_FPS = 1
 DEFAULT_WIDTH = 480
 FOLDER_NAME = 'camera-monitor-ring'
+# 画面异常时把事发片段另存到这里，避免被环形缓冲滚掉
+EVENTS_FOLDER = 'camera-monitor-events'
+# 磁盘剩这么点就不再录：环形录像只是兜底，不能把现场磁盘写满
+MIN_FREE_BYTES = 512 * 1024 * 1024
 
 
 def default_folder():
@@ -131,6 +136,32 @@ class RingRecorder:
     def close(self):
         self._close_segment()
 
+    def freeze(self, keep=2):
+        """把最近几段另存到事件目录，返回保存下来的文件路径。
+
+        环形缓冲只留 10 分钟，出事之后再来看往往已经被滚掉了；
+        画面异常发生时先把事发片段复制出来，回看才有东西可看。
+        """
+        self._close_segment()
+        saved = []
+        segments = self.segments()
+        if not segments:
+            return saved
+        target = os.path.join(tempfile.gettempdir(), EVENTS_FOLDER,
+                              f'{int(time.time())}-{self.ip.replace(":", "_")}')
+        try:
+            os.makedirs(target, exist_ok=True)
+        except OSError:
+            return saved
+        for _, path in segments[-max(1, keep):]:
+            destination = os.path.join(target, os.path.basename(path))
+            try:
+                shutil.copy2(path, destination)
+            except OSError:
+                continue
+            saved.append(destination)
+        return saved
+
     def clear(self):
         self.close()
         for _, path in self.segments():
@@ -159,9 +190,25 @@ class RecorderPool:
         self.minutes = minutes
         self.enabled = default_enabled() if enabled is None else enabled
         self.recorders = {}
+        # 磁盘写满时置上原因，界面提示一次就够
+        self.stopped_reason = ''
+
+    def _has_space(self):
+        if self.stopped_reason:
+            return False
+        try:
+            free = shutil.disk_usage(self.folder).free
+        except OSError:
+            return True         # 查不到就按有空间处理，别因为统计失败停止录像
+        if free < MIN_FREE_BYTES:
+            self.stopped_reason = f'磁盘剩余不足 {MIN_FREE_BYTES // (1024 ** 2)} MB，已暂停录像'
+            return False
+        return True
 
     def add(self, ip, image):
         if not self.enabled:
+            return False
+        if not self._has_space():
             return False
         recorder = self.recorders.get(ip)
         if recorder is None:
@@ -175,6 +222,13 @@ class RecorderPool:
             return recorder.segments()
         # 没在录的相机也允许回看上次留下的画面
         return RingRecorder(ip, self.folder, minutes=self.minutes).segments()
+
+    def freeze(self, ip, keep=2):
+        """画面异常时把这一路的事发片段另存一份。"""
+        recorder = self.recorders.get(ip)
+        if recorder is None:
+            return []
+        return recorder.freeze(keep=keep)
 
     def close(self):
         for recorder in self.recorders.values():
