@@ -5,6 +5,8 @@
 
 一句话流程：**建一个空仓库 → 关联远程 → push → 在 Actions 里看构建 → 从 Artifacts 下载产物**。
 
+仓库里已经放好两个脚本，不想敲命令的话直接看 [第 10 节：一键脚本](#10-一键脚本upload-to-githubbat)：双击 `upload-to-github.bat`，输入一次仓库地址就行。
+
 ---
 
 ## 1. 前置条件
@@ -237,3 +239,56 @@ git push origin v0.9.1
   ```
 
   若误提交的是密钥，仅删除文件不够（历史里还在），应立即在对应平台**吊销/重置该密钥**。
+
+---
+
+## 10. 一键脚本：upload-to-github.bat
+
+不想每次敲命令，用仓库根目录的两个脚本：
+
+| 文件 | 作用 |
+| --- | --- |
+| `upload-to-github.bat` | **双击运行**的入口：切到 UTF-8 代码页，优先用 `pwsh`，没有就用系统自带的 `powershell` |
+| `upload-to-github.ps1` | 实际逻辑（已存为 UTF-8 BOM，Windows PowerShell 5.1 下中文不会乱码） |
+
+### 用法
+
+1. 双击 `upload-to-github.bat`
+2. 第一次运行会提示粘贴仓库地址，例如 `https://github.com/你的用户名/CameraMonitor.git`
+   （地址会写进 git 的 `origin`，**以后运行不再询问**；想换地址在提示里按 `n` 重新输入）
+3. 之后全自动，结束时打印 Actions 地址和要去哪里下载 `CameraMonitor-Windows7-x64`
+
+### 脚本会做什么
+
+| 步骤 | 内容 |
+| --- | --- |
+| 1/4 检查环境 | 确认 `git` 可用；目录不是仓库就 `git init -b main` |
+| 2/4 检查待提交内容 | 没配用户名/邮箱就提示输入；有未提交改动就 `git add -A` + 提交（说明默认“更新：<时间>”） |
+| 3/4 关联远程仓库 | 读取已记住的地址或提示输入；地址没变就跳过，改了则 `git remote set-url` |
+| 4/4 推送到 GitHub | `git push -u origin main`；结束后打印 Actions 链接 |
+
+### 可选参数
+
+```powershell
+# 只检查、不推送、不改任何配置（第一次用建议先这样跑一遍）
+.\upload-to-github.bat -DryRun
+
+# 直接指定仓库地址，跳过交互
+.\upload-to-github.bat -Repository https://github.com/me/CameraMonitor.git
+
+# 自定义本次提交说明
+.\upload-to-github.bat -Message "修正摄像头搜索超时"
+```
+
+也可以在 PowerShell 里直接跑 `.ps1`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\upload-to-github.ps1 -DryRun
+```
+
+### 安全边界
+
+- **只往 `main` 推**，不会执行 `git push --force`，不会删除远程分支
+- 遇到 `[rejected] fetch first`（远程已有 README 之类）会**先询问**，同意后才 `git pull --rebase`
+- `-DryRun` 全程只打印将要执行的命令，不写 remote、不提交、不推送
+- 脚本本身也是仓库里的普通文件，会被一起提交；换电脑 clone 下来照样能用
