@@ -108,7 +108,7 @@ class PatrolTests(unittest.TestCase):
         results = []
         window.wall.patrol_finished.connect(results.append)
 
-        window.wall.patrol.click()
+        window.wall.check_action.trigger()
 
         self.assertEqual(['10.0.0.1', '10.0.0.2'], window._patrol_requested)
         self.assertEqual(1, len(results), '点击后必须给出汇总')
@@ -168,12 +168,56 @@ class PatrolScreenshotTests(unittest.TestCase):
         window = self.window_with_shot('10.0.0.1', '10.0.0.2')
         window.device_names.settings.setValue('monitor/patrol_folder', self.folder)
 
-        window.wall.patrol_shots.click()
+        window.wall.screenshot_action.trigger()
 
         files = sorted(path.name for path in self.day_folder().glob('*.jpg'))
         self.assertEqual(2, len(files), '每路各存一张')
         self.assertTrue(all(name.startswith('10_0_0_') for name in files))
         self.assertIn('保存 2 张', window.status.text())
+
+    def test_screenshot_is_named_after_the_camera(self):
+        window = self.window_with_shot('10.0.0.1')
+        window.device_names.save('10.0.0.1', '大门口')
+        window.device_names.settings.setValue('monitor/patrol_folder', self.folder)
+
+        window.capture_patrol_screenshots()
+
+        names = [path.name for path in self.day_folder().glob('*.jpg')]
+        self.assertEqual(1, len(names))
+        self.assertTrue(names[0].startswith('大门口_'), names)
+
+    def test_a_camera_without_a_name_falls_back_to_its_ip(self):
+        window = self.window_with_shot('10.0.0.9')
+        window.device_names.settings.setValue('monitor/patrol_folder', self.folder)
+
+        window.capture_patrol_screenshots()
+
+        names = [path.name for path in self.day_folder().glob('*.jpg')]
+        self.assertEqual(1, len(names))
+        self.assertTrue(names[0].startswith('10_0_0_9_'), names)
+
+    def test_a_name_with_illegal_characters_is_cleaned_up(self):
+        window = self.window_with_shot('10.0.0.1')
+        window.device_names.save('10.0.0.1', '东/西 门: 1')
+        window.device_names.settings.setValue('monitor/patrol_folder', self.folder)
+
+        window.capture_patrol_screenshots()
+
+        name = next(iter(self.day_folder().glob('*.jpg'))).name
+        self.assertNotIn('/', name)
+        self.assertNotIn(':', name)
+        self.assertTrue(name.startswith('东_西_门_1_'), name)
+
+    def test_a_second_capture_in_the_same_second_does_not_overwrite(self):
+        window = self.window_with_shot('10.0.0.1')
+        window.device_names.save('10.0.0.1', '大门口')
+        window.device_names.settings.setValue('monitor/patrol_folder', self.folder)
+
+        window.capture_patrol_screenshots()
+        window.capture_patrol_screenshots()
+
+        names = [path.name for path in self.day_folder().glob('*.jpg')]
+        self.assertEqual(2, len(names), '两次截图都要留下，不能互相覆盖')
 
     def test_the_first_click_asks_where_to_save_and_can_be_cancelled(self):
         window = self.window_with_shot('10.0.0.1')

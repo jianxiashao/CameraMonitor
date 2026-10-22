@@ -6,6 +6,7 @@ import logging
 import logging.handlers
 import os
 import platform
+import re
 import threading
 import time
 from datetime import datetime
@@ -682,6 +683,12 @@ class Window(QMainWindow):
         self.status.setText(f'巡检截图将保存到：{folder}')
         return True
 
+    def screenshot_label(self, device):
+        """截图文件名里的名字：用户起的名称 → 相机自带名称 → IP（点换成下划线）。"""
+        name = (self.device_names.get(device.ip) or getattr(device, 'name', '') or '').strip()
+        name = re.sub(r'[\\/:*?"<>|\s]+', '_', name).strip('._ ')
+        return name or device.ip.replace('.', '_')
+
     def capture_patrol_screenshots(self):
         """巡检截图：把每路当前画面存成图片，统一放进当天的日期文件夹。"""
         if not self.patrol_folder():
@@ -716,7 +723,7 @@ class Window(QMainWindow):
             if image is None or image.isNull():
                 empty.append(ip)
                 continue
-            base = f'{ip.replace(".", "_").replace(":", "-")}_{stamp}'
+            base = f'{self.screenshot_label(tile.player.device)}_{stamp}'
             path = target / f'{base}.jpg'
             index = 2
             while path.exists():
