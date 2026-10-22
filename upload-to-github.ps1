@@ -270,8 +270,7 @@ Ok '推送完成'
 Write-Host ''
 Write-Host '下一步（推送不会自动构建，需要手动点一下）：' -ForegroundColor Cyan
 Write-Host "   1. 打开 $web/actions" -ForegroundColor Gray
-Write-Host '   2. 左侧选 Build Windows 7 x64 EXE → 右侧 Run workflow' -ForegroundColor Gray
-Write-Host '      （Windows 11 版同理，选 Build Windows x64 EXE）' -ForegroundColor Gray
+Write-Host '   2. 左侧选 Build Windows x64 EXE → 右侧 Run workflow' -ForegroundColor Gray
 Write-Host '   3. 构建约 10-20 分钟，跑完产物会自动发布到 Release（长期可下载），' -ForegroundColor Gray
 Write-Host '      该次运行页面的 Artifacts 里也有一份（保留 14 天）' -ForegroundColor Gray
 Write-Host ''

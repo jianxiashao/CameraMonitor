@@ -1,7 +1,7 @@
 # 上传到 GitHub 说明
 
 把这份本地源码上传到自己的 GitHub 仓库，再让 Actions 产出
-`CameraMonitor-Windows11-x64`（Windows 10/11）和 `CameraMonitor-Windows7-x64`（Windows 7）。
+`CameraMonitor-Windows11-x64`（Windows 10/11）。
 
 一句话流程：**建一个空仓库 → 关联远程 → push → 在 Actions 里看构建 → 从 Artifacts 下载产物**。
 
@@ -47,7 +47,7 @@ git config --global user.email
 
 已经就位的两个关键文件：
 
-- `.gitignore`：自动排除虚拟环境、`__pycache__`、`build-win7/`、`dist-win7/`、
+- `.gitignore`：自动排除虚拟环境、`__pycache__`、`build-win/`、`dist-win/`、
   `*.log`、`test-output.txt`、编辑器目录、`*.key` / `*.crt` 等，**构建产物不会进仓库**。
 - `.gitattributes`：固定换行符（`.sh` 用 LF、`.bat` 用 CRLF），避免 macOS 上的
   发布流程因为脚本变成 CRLF 而失败。
@@ -121,13 +121,12 @@ git push -u origin main
 
 ### 推送之后需要手动运行
 
-两个 Windows 构建都设成**只在手动运行时执行**，push 到 main 不会自动跑，
+Windows 构建设成**只在手动运行时执行**，push 到 main 不会自动跑，
 不会消耗 Actions 额度，也不会在 Actions 里堆一串运行记录：
 
 | Workflow | 产物 | 运行环境 |
 | --- | --- | --- |
 | Build Windows x64 EXE | `CameraMonitor-Windows11-x64` | Python 3.12 + PySide6 / Qt 6 |
-| Build Windows 7 x64 EXE | `CameraMonitor-Windows7-x64` | Python 3.8 + PySide2 / Qt 5.15 |
 
 推送完成后，到 Actions 页面手动点 Run workflow，见第 5 节。
 `Publish desktop release`（macOS 打包 + 正式发布）只在推送 `v*` 标签时运行，见第 7 节。
@@ -137,36 +136,36 @@ git push -u origin main
 ## 5. 手动触发构建并下载产物
 
 1. 打开仓库页面 → 顶部 **Actions**
-2. 左侧列表选 **Build Windows 7 x64 EXE**（或 **Build Windows x64 EXE** 编 Windows 11 版）
+2. 左侧列表选 **Build Windows x64 EXE**
 3. 右侧 **Run workflow** 下拉 → 分支选 `main` → 绿色 **Run workflow**
-4. 等待 10–20 分钟（首次要下载约 150 MB 的 PySide2，后续有缓存会快一些）
+4. 等待 10–20 分钟（首次要下载 PySide6 依赖，后续有缓存会快一些）
 5. 构建成功后，产物有两个地方可以拿：
-   - **Release**（长期）：该次运行会自动把 `CameraMonitor-Windows7-x64.zip` 发布到
+   - **Release**（长期）：该次运行会自动把 `CameraMonitor-Windows11-x64.zip` 发布到
      `v{版本号}` 的 Release，已存在就覆盖同名资产
-   - **Artifacts**（14 天）：这次运行页面最下方的 `CameraMonitor-Windows7-x64`
+   - **Artifacts**（14 天）：这次运行页面最下方的 `CameraMonitor-Windows11-x64`
 6. 解压 zip，得到：
 
    | 文件 | 说明 |
    | --- | --- |
-   | `CameraMonitor.exe` | 主程序，约 73 MB，复制到 Windows 7 机器双击即可 |
-   | `使用说明.md` | = `packaging/Windows7使用说明.md` |
+   | `CameraMonitor.exe` | 主程序，复制到目标 Windows 电脑双击即可 |
+   | `使用说明.md` | = `packaging/Windows使用说明.md` |
    | `SHA256SUMS.txt` | 校验值，可用 `certutil -hashfile CameraMonitor.exe SHA256` 对比 |
    | `BUILD.txt` | 提交号、运行编号、目标系统、Python/Qt 版本 |
 
 Release 里的文件长期保留；Artifacts 默认**保留 14 天**，过期后重新跑一次 workflow 即可再生成。
 
 > 为什么不能直接下载 exe 到仓库？
-> 73 MB 的二进制会让仓库越来越臃肿，而且每次改动都要重新提交一次。
+> 几十 MB 的二进制会让仓库越来越臃肿，而且每次改动都要重新提交一次。
 > 产物由 Actions 现场生成、走 Release / Artifacts 分发，仓库里只放源码。
 
 ### 构建各步骤在做什么
 
 | 步骤 | 作用 |
 | --- | --- |
-| Install dependencies | 用 `packaging/requirements-win7.txt` + `requirements-build-win7.txt` 装 Python 3.8 依赖 |
+| Install dependencies | 用 `requirements.txt` + `packaging/requirements-build.txt` 装 Python 3.12 依赖 |
 | Run regression tests | 跑 `tests/` 全量单元测试（Qt 用 offscreen 模式，不弹窗） |
-| Build portable EXE | PyInstaller 按 `packaging/CameraMonitor-win7.spec` 打单文件 exe |
-| Verify Windows 7 executable | 检查是否 x64、PE 子系统版本是否 ≤ 6.1、有没有引用 Windows 8 才有的 API |
+| Build portable EXE | PyInstaller 按 `packaging/CameraMonitor-windows.spec` 打单文件 exe |
+| Verify x64 executable | 检查产物确实是 Windows x64 |
 | Test packaged application startup | 真启动 exe，验证主窗口、H.264 解码、TLS（wss）、Windows 凭据后端 |
 | Prepare download / Upload | 附上说明、SHA256、构建信息并上传 Artifacts |
 
@@ -183,17 +182,16 @@ git commit -m "说明这次改了什么"
 git push
 ```
 
-推送**不会**自动开始构建（两个 Windows workflow 都只保留手动触发）。
-要把新版本发出去，到 Actions 里手动 Run workflow：
-Build Windows 7 x64 EXE 编 Win7 版，Build Windows x64 EXE 编 Win11 版，
-产物会分别覆盖 `v{版本号}` Release 里的同名 zip。
+推送**不会**自动开始构建（Windows workflow 只保留手动触发）。
+要把新版本发出去，到 Actions 里手动 Run workflow **Build Windows x64 EXE**，
+产物会覆盖 `v{版本号}` Release 里的同名 zip。
 
 ---
 
 ## 7. 可选：打标签发布正式版本
 
-`Publish desktop release` 由 `v*` 标签触发，一次跑完 macOS 打包 + 两个 Windows 构建，
-最后把三个包一起发布到 Releases 页面：
+`Publish desktop release` 由 `v*` 标签触发，一次跑完 macOS 打包 + Windows 构建，
+最后把两个包一起发布到 Releases 页面：
 
 ```powershell
 git tag v0.9.1
@@ -203,11 +201,10 @@ git push origin v0.9.1
 | 包 | 来源 |
 | --- | --- |
 | `CameraMonitor-Windows11-x64.zip` | `windows-exe.yml`（Python 3.12 + Qt 6） |
-| `CameraMonitor-Windows7-x64.zip` | `windows-win7.yml`（Python 3.8 + Qt 5.15） |
 | `CameraMonitor-macOS-AppleSilicon.zip` | 同一个流程在 macOS runner 上打包 |
 
-手动运行单个 Windows workflow 时也会把各自那个 zip 发布到 `v{版本号}` 的 Release，
-两者共用同一个 Release：先跑的创建、后跑的覆盖同名资产。
+手动运行 Windows workflow 时也会把 `CameraMonitor-Windows11-x64.zip` 发布到
+`v{版本号}` 的 Release，与打标签发布的文件同名、会互相覆盖（内容相同）。
 Release 的说明文字取自 `packaging/RELEASE.md`，发版前记得更新它。
 
 ---
@@ -219,11 +216,11 @@ Release 的说明文字取自 `packaging/RELEASE.md`，发版前记得更新它�
 | `remote: Repository not found` | 仓库地址错 / 无权限 / 认证未通过 | 核对用户名与仓库名；重新 `git remote set-url origin <地址>`；确认 token 有 `repo` 权限 |
 | `rejected ... fetch first` | 建仓库时勾了 README / .gitignore / license | `git pull --rebase origin main` 后重新 `git push`；或删掉远程仓库重建（保持空仓库） |
 | `fatal: remote origin already exists` | 已经关联过远程 | `git remote set-url origin <新地址>` |
-| Actions 页面看不到 “Build Windows 7 x64 EXE” | workflow 不在默认分支；或 Actions 被禁用 | 确认仓库默认分支是 `main`（Settings → Branches）；Settings → Actions → General 选 **Allow all actions and reusable workflows** |
+| Actions 页面看不到 “Build Windows x64 EXE” | workflow 不在默认分支；或 Actions 被禁用 | 确认仓库默认分支是 `main`（Settings → Branches）；Settings → Actions → General 选 **Allow all actions and reusable workflows** |
 | Publish to release 步骤失败，报 403 / `Resource not accessible by integration` | 仓库给 `GITHUB_TOKEN` 的默认权限是只读 | Settings → Actions → General → **Workflow permissions** 选 **Read and write permissions**，保存后重跑 |
 | 看不到 `Run workflow` 按钮 | `workflow_dispatch` 只对默认分支显示 | 同上，先确保 workflow 已推送到 `main` |
 | 构建卡在 Install dependencies 失败 | 网络/镜像问题 | 重跑一次；日志里会显示具体 pip 报错 |
-| Verify Windows 7 executable 失败 | 产物不符合 Win7 要求 | 日志会写明是架构、PE 子系统版本还是 Win8+ API |
+| Verify x64 executable 失败 | 产物架构不对 | 日志会写明期望的结构与实际值 |
 | Test packaged application startup 失败 | exe 起不来（缺 Qt 模块 / TLS / 凭据后端） | 日志会给出具体断言（比如 `TLS backend missing from the bundle`） |
 | Run regression tests 失败 | 代码回归 | 运行概览页会直接列出每个失败的测试名和断言 |
 | 产物下载按钮是灰的 | 构建未成功或被取消 | 看运行日志；Artifacts 只在成功后有 |
@@ -234,12 +231,12 @@ Release 的说明文字取自 `packaging/RELEASE.md`，发版前记得更新它�
 
 - **不要提交凭据**：`*.key`、`*.crt` 已被 `.gitignore` 排除；任何 token、密码、
   摄像头账号都不要写进代码或文档。
-- **不要提交构建产物**：`dist-win*/`、`build-win*/`、`*.exe`、`*.zip` 都不该进仓库。
+- **不要提交构建产物**：`dist-win/`、`build-win/`、`*.exe`、`*.zip` 都不该进仓库。
 - **单个文件不要超过 100 MB**：GitHub 会直接拒绝；仓库长期建议控制在 1 GB 以内。
 - **已经误提交了怎么办**：
 
   ```powershell
-  git rm --cached -r dist-win7          # 取消跟踪，保留本地文件
+  git rm --cached -r dist-win           # 取消跟踪，保留本地文件
   git commit -m "不再跟踪构建产物"
   git push
   ```

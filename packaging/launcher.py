@@ -38,7 +38,6 @@ def smoke_window(folder):
 
 def smoke_test(result_path):
     """Exercise bundled Qt, decoder and vault imports without contacting cameras."""
-    import shutil
     import sys
     import tempfile
     from pathlib import Path
@@ -63,10 +62,7 @@ def smoke_test(result_path):
     probe = QImage(64, 36, QImage.Format.Format_RGB32)
     probe.fill(0)
     assert encode_jpeg(probe, 64, 100_000).startswith(b'\xff\xd8'), 'JPEG imageformat plugin missing from the bundle'
-    # Python 3.8（Windows 7 构建）还没有 TemporaryDirectory(ignore_cleanup_errors=...)：
-    # 手工建目录，清理失败就算了——刚关掉的窗口可能还占着 ini 文件
-    folder = tempfile.mkdtemp(prefix='camera-monitor-smoke-settings-')
-    try:
+    with tempfile.TemporaryDirectory(prefix='camera-monitor-smoke-settings-', ignore_cleanup_errors=True) as folder:
         window = smoke_window(folder)
         assert not window.windowIcon().isNull(), "Bundled application icon missing"
         window.show()
@@ -74,8 +70,6 @@ def smoke_test(result_path):
         QTimer.singleShot(3000, app.quit)
         if app.exec() != 0:
             raise RuntimeError('GUI smoke test failed')
-    finally:
-        shutil.rmtree(folder, ignore_errors=True)
     Path(result_path).write_text('ok', encoding='utf-8')
 
 if __name__ == '__main__':

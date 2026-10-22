@@ -13,5 +13,4 @@
 验证：551 项自动化测试通过（Windows 与 macOS 打包机上各跑一遍）。
 
 Windows 11 x64：下载 CameraMonitor-Windows11-x64.zip，解压后运行 CameraMonitor.exe，不需要安装 Python。
-Windows 7 SP1 x64：下载 CameraMonitor-Windows7-x64.zip，解压后运行 CameraMonitor.exe，不需要安装 Python。
 macOS 14+ Apple M 系列：解压后把 Camera Monitor.app 拖进「应用程序」。

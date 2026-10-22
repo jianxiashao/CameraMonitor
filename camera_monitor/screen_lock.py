@@ -9,8 +9,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .qt_compat import drop_connection
-
 
 class ScreenLock:
     KEY = 'fullscreen/password'
@@ -141,7 +139,7 @@ class UnlockDialog(QDialog):
     def done(self, result):
         # Disconnect while the Python receiver is alive, before deferred Qt deletion.
         for connection in self._button_connections:
-            drop_connection(self, connection)
+            self.disconnect(connection)
         self._button_connections.clear()
         super().done(result)
 

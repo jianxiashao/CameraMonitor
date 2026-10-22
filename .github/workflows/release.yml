@@ -1,7 +1,7 @@
 name: Publish desktop release
 
-# 打 v* 标签时发布正式版：Windows 11 x64、Windows 7 SP1 x64、macOS Apple Silicon 三个包。
-# 日常改代码不会触发（两个 Windows 构建只在手动运行时执行）。
+# 打 v* 标签时发布正式版：Windows 11 x64 + macOS Apple Silicon。
+# 日常改代码不会触发（Windows 构建只在手动运行时执行）。
 on:
   push:
     tags: ['v*']
@@ -12,10 +12,8 @@ permissions:
 jobs:
   windows:
     uses: ./.github/workflows/windows-exe.yml
-  windows-win7:
-    uses: ./.github/workflows/windows-win7.yml
   release:
-    needs: [windows, windows-win7]
+    needs: windows
     runs-on: macos-14
     timeout-minutes: 20
     permissions:
@@ -35,8 +33,6 @@ jobs:
         run: |
           python -c "import platform; assert platform.machine() == 'arm64'"
           python -m pip install -r requirements.txt -r packaging/requirements-build.txt
-          # 校验 Windows 7 的 exe 要读 PE 头，pefile 在 macOS 上不会随 PyInstaller 装上
-          python -m pip install pefile
           python -m unittest discover -s tests -v
       - name: Build Apple Silicon application
         run: |
@@ -51,27 +47,23 @@ jobs:
           cp packaging/macOS使用说明.md mac-package/使用说明.md
           printf 'Commit: %s\nTarget: macOS 14+ Apple Silicon arm64\n' "$GITHUB_SHA" > mac-package/BUILD.txt
           ditto -c -k --sequesterRsrc mac-package release-files/CameraMonitor-macOS-AppleSilicon.zip
-      - name: Fetch verified Windows builds
+      - name: Fetch verified Windows build
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh run download "$GITHUB_RUN_ID" -n CameraMonitor-Windows11-x64 -D windows-package
-          gh run download "$GITHUB_RUN_ID" -n CameraMonitor-Windows7-x64 -D windows7-package
           python packaging/verify-windows-exe.py windows-package/CameraMonitor.exe
-          python packaging/verify-windows-win7-exe.py windows7-package/CameraMonitor.exe
           python - <<'PY'
           import hashlib, os
           from pathlib import Path
-          for folder in ('windows-package', 'windows7-package'):
-              p = Path(folder)
-              assert os.environ['GITHUB_SHA'] in (p/'BUILD.txt').read_text(encoding='utf-8-sig')
-              assert hashlib.sha256((p/'CameraMonitor.exe').read_bytes()).hexdigest() == (p/'SHA256SUMS.txt').read_text(encoding='utf-8-sig').split()[0]
+          p = Path('windows-package')
+          assert os.environ['GITHUB_SHA'] in (p/'BUILD.txt').read_text(encoding='utf-8-sig')
+          assert hashlib.sha256((p/'CameraMonitor.exe').read_bytes()).hexdigest() == (p/'SHA256SUMS.txt').read_text(encoding='utf-8-sig').split()[0]
           PY
           (cd windows-package && zip -r ../release-files/CameraMonitor-Windows11-x64.zip .)
-          (cd windows7-package && zip -r ../release-files/CameraMonitor-Windows7-x64.zip .)
-      - name: Publish all downloads
+      - name: Publish both downloads
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           (cd release-files && shasum -a 256 *.zip > SHA256SUMS.txt)
-          gh release create "$GITHUB_REF_NAME" release-files/* --verify-tag --title "Camera Monitor $GITHUB_REF_NAME · Windows / Windows 7 / Apple 芯片 Mac" --notes-file packaging/RELEASE.md
+          gh release create "$GITHUB_REF_NAME" release-files/* --verify-tag --title "Camera Monitor $GITHUB_REF_NAME · Windows / Apple 芯片 Mac" --notes-file packaging/RELEASE.md

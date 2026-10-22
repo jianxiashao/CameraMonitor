@@ -1,7 +1,6 @@
 # Python 虚拟环境与缓存
 .venv/
 .venv-win/
-.venv-win7/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -9,13 +8,11 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 
-# 打包产物：exe 由 Actions 生成后从 Artifacts 下载，不进仓库
+# 打包产物：exe 由 Actions 生成后从 Release / Artifacts 下载，不进仓库
 build/
 dist/
 build-win/
 dist-win/
-build-win7/
-dist-win7/
 releases/
 artifacts/
 /*.spec
@@ -23,9 +20,6 @@ artifacts/
 # 测试与运行日志
 test-output.txt
 *.log
-
-# 跑 Windows 7 测试时由 packaging/win7/sitecustomize.py 生成的 OpenSSL 副本
-packaging/win7/openssl/
 
 # 编辑器 / 系统 / 工具目录
 .reasonix/

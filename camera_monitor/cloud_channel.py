@@ -15,8 +15,6 @@ from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtNetwork import QAbstractSocket, QNetworkProxy
 from PySide6.QtWebSockets import QWebSocket
 
-from .qt_compat import socket_error_signal
-
 logger = logging.getLogger(__name__)
 
 BACKOFF_SECONDS = (1, 2, 4, 8, 16, 32, 60)
@@ -67,8 +65,7 @@ class CloudChannel(QObject):
         self.socket.setMaxAllowedIncomingFrameSize(MAX_MESSAGE_BYTES)
         self.socket.connected.connect(self._on_connected)
         self.socket.disconnected.connect(self._on_disconnected)
-        # Qt 6 叫 errorOccurred，Qt 5（Windows 7 构建）叫 error
-        socket_error_signal(self.socket).connect(self._on_error)
+        self.socket.errorOccurred.connect(self._on_error)
         self.socket.sslErrors.connect(self._on_ssl_errors)
         self.socket.textMessageReceived.connect(self._on_text)
 
