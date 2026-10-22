@@ -1,6 +1,7 @@
 """Video-only RTSP preview with bounded network waits and latest-frame rendering."""
 from __future__ import annotations
 from .choices import ChoiceButton as QComboBox
+import random
 import threading
 import time
 from datetime import datetime
@@ -25,6 +26,20 @@ av.logging.set_level(av.logging.PANIC)
 # 同一台相机上反而让首帧稳定慢到 2.3 秒以上，正反两种顺序各测一遍都一样。
 PROBE_BYTES = '500000'
 PROBE_MICROSECONDS = '1000000'
+
+# 重连退避：3、6、12、24 秒，封顶 30 秒。
+#
+# 单路断线时固定 3 秒一次无所谓；但一台交换机重启会让整面墙二十几路同时断线，
+# 固定间隔会让它们齐刷刷一起砸回去——很多相机直接拒绝这种并发，于是一直连不上。
+# 退避把重连摊开，抖动再避免多路重新同步到同一瞬间。
+RECONNECT_FIRST = 3.0
+RECONNECT_MAX = 30.0
+
+
+def retry_delay(retries, jitter=lambda: random.uniform(0.8, 1.2)):
+    """第 retries 次重连前等多久（retries 从 1 开始）。"""
+    delay = min(RECONNECT_MAX, RECONNECT_FIRST * 2 ** max(0, retries - 1))
+    return round(delay * jitter(), 2)
 
 
 def live_options(transport, full_probe=False):
@@ -149,10 +164,10 @@ class Decoder(QThread):
                 if not (live and self.received and retryable):
                     self.error.emit(message)
                     break
-                delay = 3
                 retries += 1
+                delay = retry_delay(retries)
                 with self._lock: self._frame = None
-                self.recovering.emit(f'视频中断，{delay} 秒后自动重连 · 第 {retries} 次（可点击停止）')
+                self.recovering.emit(f'视频中断，{delay:.0f} 秒后自动重连 · 第 {retries} 次（可点击停止）')
                 if self.cancel.wait(delay): break
         finally:
             self._url = ''

@@ -96,12 +96,14 @@ class ReconnectTests(unittest.TestCase):
    if len(opens)==3:worker.cancel.set()
    return real_open(self.video_path)
   with patch('camera_monitor.playback.av.open',side_effect=source):
-   worker.start();done=worker.wait(8000)
-   if not done:worker.cancel.set();worker.wait(5000)
+   # 重连等待是退避的（3 秒 + 6 秒），这里不真等，只验证流程没被 URL 里的数字带偏
+   with patch.object(worker.cancel,'wait',side_effect=lambda _delay: False):
+    worker.start();done=worker.wait(8000)
+    if not done:worker.cancel.set();worker.wait(5000)
   self.assertTrue(done)
   self.assertEqual(len(opens),3)
 
- def test_every_disconnect_uses_three_second_wait(self):
+ def test_disconnects_back_off_instead_of_hammering_the_camera(self):
   worker=Decoder('rtsp://127.0.0.1/live');real_open=av.open;delays=[]
   def wait(delay):
    delays.append(delay)
@@ -111,4 +113,17 @@ class ReconnectTests(unittest.TestCase):
     worker.start();done=worker.wait(2000)
     if not done:worker.cancel.set();worker.wait(5000)
   self.assertTrue(done)
-  self.assertEqual(delays,[3,3,3,3])
+  self.assertEqual(len(delays),4)
+  # 整面墙同时断线时不能齐刷刷每 3 秒砸一次：间隔要逐步拉长，并且有上限
+  self.assertEqual(delays,sorted(delays))
+  self.assertTrue(all(0<delay<=30 for delay in delays))
+  self.assertGreater(delays[-1],delays[0])
+
+ def test_retry_delay_backs_off_and_is_capped(self):
+  from camera_monitor.playback import retry_delay
+  no_jitter=lambda:1.0
+  self.assertEqual([retry_delay(n,no_jitter) for n in range(1,8)],[3,6,12,24,30,30,30])
+  # 抖动只在实际调用时生效，范围不能把间隔抖成 0 或超过上限太多
+  for _ in range(50):
+   self.assertTrue(1.5<=retry_delay(1)<=4.0)
+   self.assertTrue(24<=retry_delay(6)<=36)

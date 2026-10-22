@@ -10,10 +10,10 @@
 
 | 系统 | 下载最新版 | 使用方式 |
 | --- | --- | --- |
-| Windows 11 · Intel / AMD 64 位 | [下载 Windows 版](https://github.com/rooma1989/CameraMonitor/releases/latest/download/CameraMonitor-Windows11-x64.zip) | 解压后运行 `CameraMonitor.exe` |
-| macOS 14+ · Apple M 系列 | [下载 Mac 版](https://github.com/rooma1989/CameraMonitor/releases/latest/download/CameraMonitor-macOS-AppleSilicon.zip) | 解压后将 `Camera Monitor.app` 拖入“应用程序” |
+| Windows 11 · Intel / AMD 64 位 | [下载 Windows 版](https://github.com/jianxiashao/CameraMonitor/releases/latest/download/CameraMonitor-Windows11-x64.zip) | 解压后运行 `CameraMonitor.exe` |
+| macOS 14+ · Apple M 系列 | [下载 Mac 版](https://github.com/jianxiashao/CameraMonitor/releases/latest/download/CameraMonitor-macOS-AppleSilicon.zip) | 解压后将 `Camera Monitor.app` 拖入“应用程序” |
 
-无需安装 Python。[全部版本与更新记录](https://github.com/rooma1989/CameraMonitor/releases) · [Windows 使用说明](packaging/Windows使用说明.md) · [Mac 使用说明](packaging/macOS使用说明.md)
+无需安装 Python。[全部版本与更新记录](https://github.com/jianxiashao/CameraMonitor/releases) · [Windows 使用说明](packaging/Windows使用说明.md) · [Mac 使用说明](packaging/macOS使用说明.md)
 
 ## 主要功能
 

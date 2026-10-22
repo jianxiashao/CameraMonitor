@@ -1,0 +1,26 @@
+# 依赖每周检查一次安全更新；合并前先看打包流程是否仍然通过
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ['dependencies']
+    commit-message:
+      prefix: 'deps'
+  - package-ecosystem: pip
+    directory: /packaging
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels: ['dependencies']
+    commit-message:
+      prefix: 'deps-build'
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels: ['dependencies']
+    commit-message:
+      prefix: 'ci'

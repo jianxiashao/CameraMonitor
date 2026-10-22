@@ -151,8 +151,18 @@ def validate_target_ip(value: str) -> str:
     return str(ip)
 
 
+def quiet_enough(last_response, now, quiet_period):
+    """已经安静够久、可以提前结束搜索了吗？
+
+    收到第一台设备之后才开始算：一台都没回话时照旧等满 duration，
+    免得网络只是慢一点就被当成"没有设备"。
+    """
+    return last_response is not None and now - last_response >= quiet_period
+
+
 def scan(networks: list[Interface], on_device=lambda device: None, on_status=lambda text: None,
-         cancel: threading.Event | None = None, duration: float = 8.0, target_ip: str | None = None) -> list[Device]:
+         cancel: threading.Event | None = None, duration: float = 8.0, target_ip: str | None = None,
+         quiet_period: float = 2.5) -> list[Device]:
     if target_ip is not None:
         target_ip = validate_target_ip(target_ip)
     cancel = cancel or threading.Event()
@@ -186,6 +196,7 @@ def scan(networks: list[Interface], on_device=lambda device: None, on_status=lam
             on_status('没有可用于搜索的网络，请连接 Wi-Fi 或有线网络。')
             return []
         start, sent = time.monotonic(), 0
+        last_response = None
         while time.monotonic() - start < duration and not cancel.is_set():
             elapsed = time.monotonic() - start
             if sent < 3 and elapsed >= sent * 1.2:
@@ -210,7 +221,11 @@ def scan(networks: list[Interface], on_device=lambda device: None, on_status=lam
                     continue
                 for device in parser(data, address[0]):
                     device.interface = f'{network.name} · {network.ip}'
+                    last_response = time.monotonic()
                     on_device(merge_device(records, device))
+            # 已经安静了一阵：该回话的相机都回过了，不必再干等到 duration
+            if quiet_enough(last_response, time.monotonic(), quiet_period):
+                break
         return list(records.values())
     finally:
         selector.close()

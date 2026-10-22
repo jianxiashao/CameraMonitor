@@ -1,7 +1,7 @@
 import json
 import struct
 import unittest
-from camera_monitor.discovery import parse_onvif, parse_dahua, merge_device, Device, dahua_probe
+from camera_monitor.discovery import parse_onvif, parse_dahua, merge_device, Device, dahua_probe, quiet_enough
 
 ONVIF = b'''<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:dn="http://www.onvif.org/ver10/network/wsdl"><s:Body><d:ProbeMatches><d:ProbeMatch><a:EndpointReference><a:Address>urn:uuid:camera1</a:Address></a:EndpointReference><d:Types>dn:NetworkVideoTransmitter</d:Types><d:Scopes>onvif://www.onvif.org/name/Front%20door onvif://www.onvif.org/hardware/IPC</d:Scopes><d:XAddrs>http://192.168.1.20/onvif/device_service</d:XAddrs></d:ProbeMatch></d:ProbeMatches></s:Body></s:Envelope>'''
 
@@ -42,5 +42,13 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(records['192.168.1.20'].name, 'Door')
         self.assertEqual(records['192.168.1.20'].model, 'IPC')
         self.assertEqual(records['192.168.1.20'].protocols, ['ONVIF', '大华 DHIP'])
+
+class SearchDurationTests(unittest.TestCase):
+    def test_search_ends_early_only_after_something_answered(self):
+        # 一台都没回话时不提前结束，否则网络只是慢一点就会被当成"没有设备"
+        self.assertFalse(quiet_enough(None, 100.0, 2.5))
+        self.assertFalse(quiet_enough(100.0, 101.0, 2.5))
+        self.assertTrue(quiet_enough(100.0, 102.5, 2.5))
+        self.assertTrue(quiet_enough(100.0, 160.0, 2.5))
 
 if __name__ == '__main__': unittest.main()

@@ -1,6 +1,7 @@
 """One-shot camera images. Network workers never own or stop live players."""
 from collections import OrderedDict
 import threading
+import time
 import av
 from PySide6.QtCore import QObject, QThread, Signal, Slot, Qt
 from PySide6.QtGui import QImage, QPixmap
@@ -52,13 +53,18 @@ class ThumbnailWorker(QThread):
             # Match playback: missing saved credentials may mean an anonymous camera.
             username, password = credentials[:2] if credentials is not None else ('', '')
             mode = self.options.get('mode', 'onvif')
-            if mode == 'manual':
-                url = same_device_url(self.options.get('url', ''), self.device.ip)
-            elif mode == 'dahua':
-                url = dahua_streams(self.device.ip, self.options.get('channel', 1))[0].url
-            else:
-                client = OnvifClient(self.device, username, password, self.cancel)
-                url = client.streams()[0].url
+            # 上一轮已经解析过地址就直接用，省掉一次 ONVIF 往返
+            url = self.options.get('cached_url')
+            if not url:
+                if mode == 'manual':
+                    url = same_device_url(self.options.get('url', ''), self.device.ip)
+                elif mode == 'dahua':
+                    url = dahua_streams(self.device.ip, self.options.get('channel', 1))[0].url
+                else:
+                    client = OnvifClient(self.device, username, password, self.cancel)
+                    url = client.streams()[0].url
+                    # 只有 ONVIF 解析结果值得缓存：手动/大华地址本来就是现成算出来的
+                    self.options['resolved_url'] = url
             if not self.cancel.is_set():
                 image = first_frame(authenticated_url(url, username, password), self.cancel,
                                     self.options.get('transport', 'tcp'))
@@ -98,6 +104,10 @@ class ThumbnailController(QObject):
         self.started_with = {}
         # 线程已经在跑时又有人带着另一组账号来要：这次没抓到就用它再试一次
         self.retry_credentials = {}
+        # 缩略图每 2.5 秒一轮，每轮都重新问一遍 ONVIF 太浪费：解析出来的地址缓存
+        # 几分钟，抓拍失败或换了账号再清掉
+        self.uri_cache = {}
+        self.uri_ttl = 300
 
     def request(self, device, credentials=None):
         image = self.live_image(device.ip)
@@ -134,6 +144,14 @@ class ThumbnailController(QObject):
         options = {'mode': 'dahua' if '大华 DHIP' in device.protocols else 'onvif', 'transport': 'tcp'}
         if self.connection_options: options['transport'] = self.connection_options.transport(device.ip)
         if self.connection: options.update(self.connection(device) or {})
+        # 最近解析过 ONVIF 地址就直接用，不再问相机一遍
+        cached = self.uri_cache.get(device.ip)
+        if cached is not None:
+            url, fetched_at = cached
+            if time.monotonic() - fetched_at < self.uri_ttl:
+                options['cached_url'] = url
+            else:
+                self.uri_cache.pop(device.ip, None)
         self.pending[device.ip] = (device, self.sequence, options, credentials)
         self.updated.emit(device.ip, None, '等待获取画面…')
         self._pump()
@@ -153,6 +171,9 @@ class ThumbnailController(QObject):
     def _accept(self, ip, token, image, status):
         if self.tokens.get(ip) != token:
             return
+        if image is None:
+            # 抓不到就把地址缓存丢掉：下一轮重新问相机（可能改了编码或换了账号）
+            self.uri_cache.pop(ip, None)
         live = self.live_image(ip)
         if live is not None and not live.isNull():
             image, status = live.copy(), '播放画面 · 点击放大'
@@ -171,6 +192,11 @@ class ThumbnailController(QObject):
         worker = self.sender()
         self.active.discard(worker)
         self.started_with.pop(worker, None)
+        options = getattr(worker, 'options', None) or {}
+        resolved = options.get('resolved_url')
+        # 只有这次结果仍然是最新的才缓存，别让过期的解析结果覆盖新的请求
+        if resolved and self.tokens.get(worker.device.ip) == worker.token:
+            self.uri_cache[worker.device.ip] = (resolved, time.monotonic())
         worker.deleteLater()
         self._pump()
 

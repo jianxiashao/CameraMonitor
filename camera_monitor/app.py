@@ -14,8 +14,10 @@ from PySide6.QtGui import QShortcut, QKeySequence, QIcon
 from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QBoxLayout, QInputDialog, QCheckBox,
-    QAbstractItemView, QPlainTextEdit, QProgressBar, QSplitter, QFrame, QScrollArea, QStackedWidget, QSizePolicy)
+    QAbstractItemView, QPlainTextEdit, QProgressBar, QSplitter, QFrame, QScrollArea, QStackedWidget, QSizePolicy,
+    QMessageBox)
 from . import __version__
+from . import crash_guard, single_instance
 from .discovery import Device, interfaces, scan, validate_target_ip
 from .playback import PlayerWindow
 from .device_list import DeviceList
@@ -1103,6 +1105,13 @@ class Window(QMainWindow):
         player.transport.setCurrentIndex(1 if transport=='udp' else 0)
         player.transport.blockSignals(False)
 
+    def show_stopping(self):
+        """收尾要等几轮定时器，先说明程序在停，别让人觉得"点了没反应"。"""
+        if getattr(self,'stopping_shown',False):return
+        self.stopping_shown=True
+        try:self.status.setText('正在停止画面…')
+        except Exception:pass
+
     def closeEvent(self, event):
         if self.managed_fullscreen is not None and not self.authorized_quit:
             event.ignore();return
@@ -1112,6 +1121,7 @@ class Window(QMainWindow):
                 and not self.exit_fullscreen():
             event.ignore();return
         self.closing=True
+        self.show_stopping()
         # 改完不到一秒就关了软件：排着的本机快照当场写掉，否则重启后少了刚才那一步
         if self.local_snapshot_timer.isActive():self.local_snapshot_timer.stop();self.save_local_snapshot()
         if self.worker and self.worker.isRunning():self.worker.cancel.set()
@@ -1184,6 +1194,13 @@ def main():
     data=QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
     if data:setup_logging(os.path.join(data,'logs'))
     log_startup(sys.argv)
+    # 崩溃现场也写进这个目录：打包后没有控制台，闪退只能靠它查
+    crash_guard.install(os.path.join(data, 'logs') if data else '')
+    # 第二个实例直接退出：两套解码线程会把同一批相机挤掉，还会同时写设置和快照
+    instance = single_instance.acquire()
+    if instance is None:
+        QMessageBox.information(None, 'Camera Monitor', '程序已经在运行，请切换到已打开的窗口。')
+        return
     app.setWindowIcon(QIcon(str(Path(__file__).parent/'assets'/'app-icon.png')))
     app.setStyle('Fusion')
     window = Window()
