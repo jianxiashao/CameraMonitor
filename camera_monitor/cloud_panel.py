@@ -58,6 +58,12 @@ class CloudPanel(QWidget):
         self.dialog = None
         self.connected = False
 
+    def detach_button(self):
+        """把按钮交给外部（工具栏用），本组件只留下状态提示。"""
+        self.layout().removeWidget(self.button)
+        self.button.setParent(None)
+        return self.button
+
     def toggle(self):
         # exec() 会起一个嵌套事件循环，期间这个方法可能被再次触发（重复点击、
         # 辅助功能重发的按键等）。此前内层的 finally 会把 self.dialog 置空，

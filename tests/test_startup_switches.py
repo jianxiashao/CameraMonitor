@@ -63,8 +63,10 @@ class StartupSwitchTests(unittest.TestCase):
         window = self.window()
         toolbar = window.wall.toolbar_widget
 
-        self.assertIs(toolbar, window.autostart_toggle.parentWidget())
-        self.assertIs(toolbar, window.start_fullscreen_toggle.parentWidget())
+        # 开关现在和其它设置项一起放在工具栏右侧区里，仍然属于这条工具栏
+        for box in (window.autostart_toggle, window.start_fullscreen_toggle):
+            self.assertTrue(toolbar.isAncestorOf(box), '开关要留在监控墙工具栏上')
+            self.assertIs(window.wall.toolbar_right, box.parentWidget())
         self.assertEqual('开机自动启动', window.autostart_toggle.text())
         self.assertEqual('启动后自动全屏', window.start_fullscreen_toggle.text())
 

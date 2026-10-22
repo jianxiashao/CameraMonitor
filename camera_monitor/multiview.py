@@ -395,14 +395,21 @@ class MultiView(QDialog):
         self.patrol.clicked.connect(self.start_patrol)
         toolbar.addWidget(self.patrol)
         toolbar.addStretch()
+        # 右侧设置区：云端同步 / 机构名称 / 大屏密码 / 启动开关 / 设置 / 全屏。
+        # 全部塞进一个右对齐容器，上层按位置插入即可，保证同一行、统一靠右
+        self.toolbar_right=QWidget()
+        self.right_layout=QHBoxLayout(self.toolbar_right)
+        self.right_layout.setContentsMargins(0,0,0,0)
+        self.right_layout.setSpacing(6)
+        toolbar.addWidget(self.toolbar_right)
         # 设置：原来侧边栏「更多操作」里的功能都收进这个菜单
         self.settings_button=QPushButton('设置')
         self.settings_menu=QMenu(self.settings_button)
         self.settings_button.setMenu(self.settings_menu)
-        toolbar.addWidget(self.settings_button)
+        self.right_layout.addWidget(self.settings_button)
         self.fullscreen=QPushButton('全屏')
         self.fullscreen.clicked.connect(self.fullscreen_requested)
-        toolbar.addWidget(self.fullscreen)
+        self.right_layout.addWidget(self.fullscreen)
         layout.addWidget(self.toolbar_widget)
         self.layout_toolbar=QWidget()
         layout_choices=QHBoxLayout(self.layout_toolbar)
@@ -425,7 +432,9 @@ class MultiView(QDialog):
         layout.addWidget(self.layout_toolbar)
 
         self.organization_button=QPushButton('机构名称')
-        toolbar.addWidget(self.organization_button)
+        self.organization_button.setToolTip('设置全屏时显示在顶部的机构名称')
+        # 最左侧，紧跟后面的云端同步 / 大屏密码 / 启动开关，一起右对齐
+        self.right_layout.insertWidget(0, self.organization_button)
         self.organization_panel=QWidget()
         organization_layout=QHBoxLayout(self.organization_panel)
         organization_layout.addWidget(QLabel('全屏顶部名称'))

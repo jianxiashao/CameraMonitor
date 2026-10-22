@@ -205,6 +205,7 @@ class Window(QMainWindow):
         self.cloud_panel=CloudPanel()
         self.cloud_panel.login_requested.connect(self.cloud_login)
         self.cloud_panel.logout_requested.connect(self.cloud_logout)
+        # 侧边栏只留状态提示；按钮稍后挪到工具栏「设置」左边
         side.addWidget(self.cloud_panel)
         # 底部只留一个常驻入口：其余高频/低频操作都收进了工具栏的「设置」菜单
         divider=QFrame();divider.setFrameShape(QFrame.Shape.HLine)
@@ -245,6 +246,10 @@ class Window(QMainWindow):
         settings_menu.addSeparator()
         self.theme_action = settings_menu.addAction(theme.label(theme.current()), self.toggle_theme)
         settings_menu.addAction('每天自动重启…', self.configure_restart_hour)
+        # 云端同步按钮放到「设置」左边（和其它设置项一起右对齐）
+        self.cloud_button = self.cloud_panel.detach_button()
+        settings_index = self.wall.right_layout.indexOf(self.wall.settings_button)
+        self.wall.right_layout.insertWidget(settings_index, self.cloud_button)
         work.addWidget(self.wall,1)
         work.setContentsMargins(0,0,42,0)
         self.settings_panel=QFrame(root);self.settings_panel.setObjectName('settingsPanel')
@@ -283,7 +288,6 @@ class Window(QMainWindow):
         self.restart_check_timer.start()
         self.password_settings=QPushButton('大屏密码')
         self.password_settings.clicked.connect(self.show_password_settings)
-        self.wall.toolbar_widget.layout().addWidget(self.password_settings)
         # 完整模式的两个开关。工具栏在傻瓜模式下整条隐藏，这两个也跟着看不见
         self.autostart_toggle=QCheckBox('开机自动启动')
         self.autostart_toggle.setToolTip('电脑开机登录后自动打开监控软件。')
@@ -292,7 +296,12 @@ class Window(QMainWindow):
         self.refresh_startup_toggles()
         self.autostart_toggle.toggled.connect(self.set_autostart_wanted)
         self.start_fullscreen_toggle.toggled.connect(self.set_start_fullscreen)
-        for box in (self.autostart_toggle,self.start_fullscreen_toggle):self.wall.toolbar_widget.layout().addWidget(box)
+        # 右侧统一右对齐：机构名称 → 大屏密码 → 两个启动开关 → 云端同步 → 设置 → 全屏
+        right=self.wall.right_layout
+        organization_index=right.indexOf(self.wall.organization_button)
+        right.insertWidget(organization_index+1, self.password_settings)
+        right.insertWidget(organization_index+2, self.autostart_toggle)
+        right.insertWidget(organization_index+3, self.start_fullscreen_toggle)
         self.applying_cloud=False
         # 正在回放本机快照：这期间本机存储发出的「变了」是回放自己写的，不能再存一遍
         self.replaying_local=False
