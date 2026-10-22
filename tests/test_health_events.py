@@ -1,11 +1,14 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+import shutil
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from camera_monitor.cloud_channel import CloudChannel
 from camera_monitor.discovery import Device
@@ -134,6 +137,75 @@ class PatrolTests(unittest.TestCase):
         window.wall.patrol_finished.connect(results.append)
         window.wall.start_patrol()
         self.assertIn('还没有相机', results[0])
+
+
+class PatrolScreenshotTests(unittest.TestCase):
+    """巡检截图：首次点击提示设置位置，图片统一进当天的日期文件夹。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+
+    def day_folder(self):
+        return Path(self.folder) / datetime.now().strftime('%Y-%m-%d')
+
+    def window_with_shot(self, *ips):
+        window = make_window(self)
+        window.thumbnails.request = lambda *args, **kwargs: None
+        for ip in ips:
+            device = Device(ip)
+            window.add_device(device)
+            window.wall.add_device(device)
+        for tile in window.wall.tiles:
+            tile.player.surface.current_image = lambda color=0x336699: picture(color=color)
+        return window
+
+    def test_configured_folder_gets_a_dated_subfolder(self):
+        window = self.window_with_shot('10.0.0.1', '10.0.0.2')
+        window.device_names.settings.setValue('monitor/patrol_folder', self.folder)
+
+        window.wall.patrol_shots.click()
+
+        files = sorted(path.name for path in self.day_folder().glob('*.jpg'))
+        self.assertEqual(2, len(files), '每路各存一张')
+        self.assertTrue(all(name.startswith('10_0_0_') for name in files))
+        self.assertIn('保存 2 张', window.status.text())
+
+    def test_the_first_click_asks_where_to_save_and_can_be_cancelled(self):
+        window = self.window_with_shot('10.0.0.1')
+
+        with patch('camera_monitor.app.QMessageBox.question',
+                   return_value=QMessageBox.StandardButton.No):
+            window.capture_patrol_screenshots()
+
+        self.assertEqual('', window.patrol_folder(), '取消后不应记住任何目录')
+        self.assertFalse(self.day_folder().exists())
+
+    def test_picking_a_folder_on_the_first_click_then_captures(self):
+        window = self.window_with_shot('10.0.0.1')
+
+        with patch('camera_monitor.app.QMessageBox.question',
+                   return_value=QMessageBox.StandardButton.Yes), \
+                patch('camera_monitor.app.QFileDialog.getExistingDirectory',
+                      return_value=self.folder):
+            window.capture_patrol_screenshots()
+
+        self.assertEqual(self.folder, window.patrol_folder())
+        self.assertEqual(1, len(list(self.day_folder().glob('*.jpg'))))
+
+    def test_a_camera_without_any_picture_is_reported_not_saved(self):
+        window = self.window_with_shot('10.0.0.1')
+        window.wall.tiles[0].player.surface.current_image = lambda: None
+        window.device_names.settings.setValue('monitor/patrol_folder', self.folder)
+
+        window.capture_patrol_screenshots()
+
+        self.assertIn('无画面', window.status.text())
+        self.assertEqual([], list(self.day_folder().glob('*.jpg')))
 
 
 class HeartbeatHealthTests(unittest.TestCase):

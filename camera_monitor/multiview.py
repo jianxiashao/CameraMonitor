@@ -302,6 +302,8 @@ class MultiView(QDialog):
     patrol_requested=Signal(str)
     # 巡检汇总文本：交给上层弹窗/状态栏显示（本控件的提示标签默认是隐藏的）
     patrol_finished=Signal(str)
+    # 巡检截图：由上层决定保存位置并落盘（需要读写设置、弹目录选择框）
+    patrol_screenshot_requested=Signal()
     fullscreen_requested=Signal()
     tile_removing=Signal(object)
     settings_requested=Signal(object)
@@ -396,6 +398,10 @@ class MultiView(QDialog):
         self.patrol.setToolTip('逐路重新取一次画面，并汇总哪些相机离线或异常')
         self.patrol.clicked.connect(self.start_patrol)
         toolbar.addWidget(self.patrol)
+        self.patrol_shots=QPushButton('巡检截图')
+        self.patrol_shots.setToolTip('把每路当前画面存成图片，统一放进当天的日期文件夹')
+        self.patrol_shots.clicked.connect(self.patrol_screenshot_requested)
+        toolbar.addWidget(self.patrol_shots)
         toolbar.addStretch()
         # 右侧设置区：云端同步 / 机构名称 / 大屏密码 / 启动开关 / 设置 / 全屏。
         # 全部塞进一个右对齐容器，上层按位置插入即可，保证同一行、统一靠右

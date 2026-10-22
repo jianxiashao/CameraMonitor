@@ -47,6 +47,8 @@ from . import win_topmost
 logger=logging.getLogger(__name__)
 # 完整模式「启动后自动全屏」；它和 monitor/autostart 一样跟着 layout 同步到云端
 START_FULLSCREEN_KEY='monitor/start_fullscreen'
+# 巡检截图的保存根目录；图片统一放进它的「YYYY-MM-DD」子文件夹
+PATROL_FOLDER_KEY='monitor/patrol_folder'
 # 不登录云端的电脑存的本机快照，格式同云端配置（剥掉密码）。local/ 不算启动分流里的「用过」
 LOCAL_SNAPSHOT_KEY='local/snapshot'
 LOCAL_SNAPSHOT_DELAY_MS=1000
@@ -237,6 +239,7 @@ class Window(QMainWindow):
         self.wall.tile_removing.connect(self.remove_settings)
         self.wall.patrol_requested.connect(self.refresh_snapshot)
         self.wall.patrol_finished.connect(self.show_patrol_result)
+        self.wall.patrol_screenshot_requested.connect(self.capture_patrol_screenshots)
         # 工具栏「设置」菜单：原来侧边栏「更多操作」里的功能全在这里
         settings_menu = self.wall.settings_menu
         settings_menu.addAction('机构名称…', self.wall.toggle_organization)
@@ -250,6 +253,7 @@ class Window(QMainWindow):
         settings_menu.addSeparator()
         settings_menu.addAction('批量账号密码…', self.show_batch_settings)
         settings_menu.addAction('导出诊断包…', self.export_diagnostics)
+        settings_menu.addAction('巡检截图保存位置…', lambda: self.configure_patrol_folder())
         settings_menu.addSeparator()
         settings_menu.addAction('导出配置…', self.export_config_file)
         settings_menu.addAction('导入配置…', self.import_config_file)
@@ -656,6 +660,84 @@ class Window(QMainWindow):
         device = self.devices.get(ip)
         if device is not None:
             self.thumbnails.request(device)
+
+    def thumbnail_for(self, ip):
+        """这一路最近一次的缩略图（没在播放时截图就用它）。"""
+        for index, row in enumerate(self.table.rows):
+            if self.table.item(index, 0).text() == ip:
+                return row.thumbnail_image
+        return None
+
+    def patrol_folder(self):
+        """巡检截图的保存根目录（图片会按日期建子文件夹）。"""
+        return str(self.device_names.settings.value(PATROL_FOLDER_KEY, '') or '').strip()
+
+    def configure_patrol_folder(self):
+        """选一个文件夹存巡检截图；选好后立即记住。"""
+        start = self.patrol_folder() or str(Path.home() / 'Pictures')
+        folder = QFileDialog.getExistingDirectory(self, '选择巡检截图保存位置', start)
+        if not folder:
+            return False
+        self.device_names.settings.setValue(PATROL_FOLDER_KEY, folder)
+        self.status.setText(f'巡检截图将保存到：{folder}')
+        return True
+
+    def capture_patrol_screenshots(self):
+        """巡检截图：把每路当前画面存成图片，统一放进当天的日期文件夹。"""
+        if not self.patrol_folder():
+            answer = QMessageBox.question(self, '巡检截图',
+                '还没有设置巡检截图的保存位置。\n\n现在选择保存文件夹吗？',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            if not self.configure_patrol_folder() or not self.patrol_folder():
+                return
+        tiles = list(self.wall.tiles)
+        if not tiles:
+            self.show_patrol_result('巡检截图：监控墙上还没有相机')
+            return
+        now = datetime.now()
+        day = now.strftime('%Y-%m-%d')
+        target = Path(self.patrol_folder()) / day
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            QMessageBox.warning(self, '巡检截图', f'无法创建文件夹：\n{target}\n\n{error}')
+            return
+        stamp = now.strftime('%H%M%S')
+        saved, empty, failed = [], [], []
+        for tile in tiles:
+            ip = tile.player.device.ip
+            image = tile.player.surface.current_image()
+            if image is None or image.isNull():
+                # 没在播放：退而求其次用列表里最近一次缩略图
+                image = self.thumbnail_for(ip)
+            if image is None or image.isNull():
+                empty.append(ip)
+                continue
+            base = f'{ip.replace(".", "_").replace(":", "-")}_{stamp}'
+            path = target / f'{base}.jpg'
+            index = 2
+            while path.exists():
+                path = target / f'{base}-{index}.jpg'
+                index += 1
+            if image.save(str(path), 'JPG', 85):
+                saved.append(path.name)
+            else:
+                failed.append(ip)
+        summary = [f'巡检截图：保存 {len(saved)} 张']
+        if empty:
+            summary.append(f'无画面 {len(empty)} 路')
+        if failed:
+            summary.append(f'失败 {len(failed)} 路')
+        lines = ['，'.join(summary) + f'（{day} 文件夹）']
+        if empty:
+            lines.append('无画面（未播放且没有缩略图）：' + '、'.join(empty))
+        if failed:
+            lines.append('保存失败：' + '、'.join(failed))
+        lines.append(f'位置：{target}')
+        self.show_patrol_result('\n'.join(lines))
 
     def show_patrol_result(self, text):
         """一键巡检的结果：状态栏留一行汇总，非大屏状态下再弹一个不阻塞的明细框。"""
