@@ -39,11 +39,12 @@
 
 ## GitHub 云端编译
 
-仓库已包含 `.github/workflows/windows-exe.yml`。上传源代码到 main 分支会触发编译，
-也可在仓库 Actions → Build Windows x64 EXE → Run workflow 手动启动。
+仓库已包含 `.github/workflows/windows-exe.yml`。它**只在手动运行时构建**，
+改代码 push 到 main 不会自动触发：在仓库 Actions → Build Windows x64 EXE → Run workflow 启动。
 流程使用 Windows 云端环境和 Python 3.12 x64，自动运行测试、打包、
 检查 exe 架构以及启动主窗口，确认视频解码和系统密码存储组件能加载。
 
-成功后，在该次运行页面的 Artifacts 中下载 `CameraMonitor-Windows11-x64`，
-解压后运行 `CameraMonitor.exe`。下载包保留 14 天，可重新运行流程生成。
+成功后，脚本会把 `CameraMonitor-Windows11-x64.zip` 上传到 `v{版本号}` 的 Release
+（版本号取自 `camera_monitor/__init__.py`，已存在就覆盖同名资产），可以长期下载。
+同一次运行页面的 Artifacts 里也有同样的文件，保留 14 天。
 云端无法访问你的内网摄像头，真实搜索、播放和密码保存仍需在目标电脑验收。

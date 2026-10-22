@@ -119,31 +119,31 @@ git push -u origin main
 3. 勾选 `repo` 权限，生成后复制 token
 4. 密码处粘贴 token（用户名填 GitHub 用户名）
 
-### 推送成功后会立即发生什么
+### 推送之后需要手动运行
 
-因为 `main` 上有两个 workflow，且它们的 `paths` 都能匹配到本次推送的内容，
-GitHub 会**自动并行启动两个构建**：
+两个 Windows 构建都设成**只在手动运行时执行**，push 到 main 不会自动跑，
+不会消耗 Actions 额度，也不会在 Actions 里堆一串运行记录：
 
 | Workflow | 产物 | 运行环境 |
 | --- | --- | --- |
 | Build Windows x64 EXE | `CameraMonitor-Windows11-x64` | Python 3.12 + PySide6 / Qt 6 |
 | Build Windows 7 x64 EXE | `CameraMonitor-Windows7-x64` | Python 3.8 + PySide2 / Qt 5.15 |
 
-`Publish desktop release`（macOS 打包 + 正式发布）只在推送 `v*` 标签时运行，
-普通 push 不会触发，见第 7 节。
+推送完成后，到 Actions 页面手动点 Run workflow，见第 5 节。
+`Publish desktop release`（macOS 打包 + 正式发布）只在推送 `v*` 标签时运行，见第 7 节。
 
 ---
 
 ## 5. 手动触发构建并下载产物
 
-推送后如果自动构建已经在跑，可以直接跳到第 4 小步。
-
 1. 打开仓库页面 → 顶部 **Actions**
-2. 左侧列表选 **Build Windows 7 x64 EXE**
+2. 左侧列表选 **Build Windows 7 x64 EXE**（或 **Build Windows x64 EXE** 编 Windows 11 版）
 3. 右侧 **Run workflow** 下拉 → 分支选 `main` → 绿色 **Run workflow**
 4. 等待 10–20 分钟（首次要下载约 150 MB 的 PySide2，后续有缓存会快一些）
-5. 构建成功后，进入这次运行页面，滚动到最下方 **Artifacts** 区域：
-   下载 **`CameraMonitor-Windows7-x64`**
+5. 构建成功后，产物有两个地方可以拿：
+   - **Release**（长期）：该次运行会自动把 `CameraMonitor-Windows7-x64.zip` 发布到
+     `v{版本号}` 的 Release，已存在就覆盖同名资产
+   - **Artifacts**（14 天）：这次运行页面最下方的 `CameraMonitor-Windows7-x64`
 6. 解压 zip，得到：
 
    | 文件 | 说明 |
@@ -153,11 +153,11 @@ GitHub 会**自动并行启动两个构建**：
    | `SHA256SUMS.txt` | 校验值，可用 `certutil -hashfile CameraMonitor.exe SHA256` 对比 |
    | `BUILD.txt` | 提交号、运行编号、目标系统、Python/Qt 版本 |
 
-Artifacts 默认**保留 14 天**，过期后重新跑一次 workflow 即可再生成。
+Release 里的文件长期保留；Artifacts 默认**保留 14 天**，过期后重新跑一次 workflow 即可再生成。
 
 > 为什么不能直接下载 exe 到仓库？
 > 73 MB 的二进制会让仓库越来越臃肿，而且每次改动都要重新提交一次。
-> 产物由 Actions 现场生成、走 Artifacts 分发，仓库里只放源码。
+> 产物由 Actions 现场生成、走 Release / Artifacts 分发，仓库里只放源码。
 
 ### 构建各步骤在做什么
 
@@ -183,27 +183,32 @@ git commit -m "说明这次改了什么"
 git push
 ```
 
-`windows-win7.yml` 的触发路径是 `camera_monitor/**`、`packaging/**`、`tests/**`
-和 workflow 自身；只改 `README.md` 这类文档不会触发构建。
-
-想跳过自动触发、等攒够改动再手动跑一次，可以在 commit message 里加 `[skip ci]`。
+推送**不会**自动开始构建（两个 Windows workflow 都只保留手动触发）。
+要把新版本发出去，到 Actions 里手动 Run workflow：
+Build Windows 7 x64 EXE 编 Win7 版，Build Windows x64 EXE 编 Win11 版，
+产物会分别覆盖 `v{版本号}` Release 里的同名 zip。
 
 ---
 
 ## 7. 可选：打标签发布正式版本
 
-`Publish desktop release` 由 `v*` 标签触发，会跑 macOS 打包 + 取用 Windows 构建，
-最后发布到 Releases 页面：
+`Publish desktop release` 由 `v*` 标签触发，一次跑完 macOS 打包 + 两个 Windows 构建，
+最后把三个包一起发布到 Releases 页面：
 
 ```powershell
 git tag v0.9.1
 git push origin v0.9.1
 ```
 
-注意：这个发布流程目前的 `release.yml` 只引用了 `windows-exe.yml`（Windows 11 版）
-和 macOS 打包，**Windows 7 版本不会进 Releases**，仍从 Actions 的 Artifacts 获取。
-若希望 Win7 版也进正式发布，需要修改 `.github/workflows/release.yml`，把
-`windows-win7.yml` 作为额外 job 引入并加入发布清单。
+| 包 | 来源 |
+| --- | --- |
+| `CameraMonitor-Windows11-x64.zip` | `windows-exe.yml`（Python 3.12 + Qt 6） |
+| `CameraMonitor-Windows7-x64.zip` | `windows-win7.yml`（Python 3.8 + Qt 5.15） |
+| `CameraMonitor-macOS-AppleSilicon.zip` | 同一个流程在 macOS runner 上打包 |
+
+手动运行单个 Windows workflow 时也会把各自那个 zip 发布到 `v{版本号}` 的 Release，
+两者共用同一个 Release：先跑的创建、后跑的覆盖同名资产。
+Release 的说明文字取自 `packaging/RELEASE.md`，发版前记得更新它。
 
 ---
 
@@ -215,6 +220,7 @@ git push origin v0.9.1
 | `rejected ... fetch first` | 建仓库时勾了 README / .gitignore / license | `git pull --rebase origin main` 后重新 `git push`；或删掉远程仓库重建（保持空仓库） |
 | `fatal: remote origin already exists` | 已经关联过远程 | `git remote set-url origin <新地址>` |
 | Actions 页面看不到 “Build Windows 7 x64 EXE” | workflow 不在默认分支；或 Actions 被禁用 | 确认仓库默认分支是 `main`（Settings → Branches）；Settings → Actions → General 选 **Allow all actions and reusable workflows** |
+| Publish to release 步骤失败，报 403 / `Resource not accessible by integration` | 仓库给 `GITHUB_TOKEN` 的默认权限是只读 | Settings → Actions → General → **Workflow permissions** 选 **Read and write permissions**，保存后重跑 |
 | 看不到 `Run workflow` 按钮 | `workflow_dispatch` 只对默认分支显示 | 同上，先确保 workflow 已推送到 `main` |
 | 构建卡在 Install dependencies 失败 | 网络/镜像问题 | 重跑一次；日志里会显示具体 pip 报错 |
 | Verify Windows 7 executable 失败 | 产物不符合 Win7 要求 | 日志会写明是架构、PE 子系统版本还是 Win8+ API |

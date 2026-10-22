@@ -1,16 +1,10 @@
 name: Build Windows x64 EXE
 
+# 只在手动运行（或在 release.yml 里被复用时）执行，push 不会自动构建。
+# 手动运行成功后，产物会压缩上传到 v{版本号} 的 Release，长期可下载。
 on:
   workflow_call:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'camera_monitor/**'
-      - 'packaging/**'
-      - 'requirements.txt'
-      - 'tests/**'
-      - '.github/workflows/windows-exe.yml'
 
 permissions:
   contents: read
@@ -70,3 +64,53 @@ jobs:
           path: dist-win/*
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    # 只有手动运行时才发 Release；被 release.yml 调用时由那个流程统一发布（发布 macOS + 两个 Windows）
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Read version tag
+        id: version
+        shell: pwsh
+        # 版本号只有 camera_monitor/__init__.py 一处，Release 的 tag 就用它
+        run: |
+          $version = (Select-String -Path camera_monitor/__init__.py -Pattern "__version__\s*=\s*'([^']+)'").Matches[0].Groups[1].Value
+          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Fetch and check the build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh run download ${{ github.run_id }} -n CameraMonitor-Windows11-x64 -D package
+          $actual = (Get-FileHash package/CameraMonitor.exe -Algorithm SHA256).Hash.ToLower()
+          $expected = ((Get-Content package/SHA256SUMS.txt -Encoding utf8) -split '\s+')[0].Trim()
+          if ($actual -ne $expected) { throw "SHA256 不一致：$actual != $expected" }
+          Compress-Archive -Path package/* -DestinationPath CameraMonitor-Windows11-x64.zip -Force
+      - name: Publish to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: pwsh
+        # 用 GITHUB_TOKEN 创建 Release 不会反过来触发别的 workflow；
+        # Release 已存在就覆盖同名资产，两个 Windows 构建共用同一个 Release
+        run: |
+          gh release view $env:TAG 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG CameraMonitor-Windows11-x64.zip --clobber
+          } else {
+            gh release create $env:TAG CameraMonitor-Windows11-x64.zip --title "Camera Monitor $env:TAG" --notes-file packaging/RELEASE.md
+            if ($LASTEXITCODE -ne 0) {
+              # 另一个构建刚好抢先创建了同一个 Release：退化成覆盖上传
+              gh release upload $env:TAG CameraMonitor-Windows11-x64.zip --clobber
+            }
+          }
+          gh release view $env:TAG --json url --jq .url
