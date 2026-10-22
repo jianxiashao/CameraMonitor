@@ -168,7 +168,9 @@ class MonitorFeatures(unittest.TestCase):
     surface=tile.player.surface
     self.assertAlmostEqual(surface.height(),surface.width()*9/16,delta=1)
     sizes.append(surface.size())
-   self.assertEqual(sizes[0],sizes[1])
+   # 同一布局里的格子应当一样大；网格余数由 Qt 取整，允许 1 像素差
+   self.assertLessEqual(abs(sizes[0].width()-sizes[1].width()),1)
+   self.assertLessEqual(abs(sizes[0].height()-sizes[1].height()),1)
   first=w.wall.tiles[0]
   QTest.mouseClick(first.player.surface,Qt.MouseButton.LeftButton)
   self.assertIs(w.wall.focused_tile,first);self.assertEqual(len(w.wall.placeholders),0)

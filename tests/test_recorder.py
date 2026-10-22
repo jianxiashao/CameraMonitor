@@ -55,7 +55,7 @@ class RingRecorderTests(unittest.TestCase):
         self.assertFalse(stale.exists(), '超过保留时长的分段要被删掉')
 
     def test_pool_returns_segments_for_cameras_that_are_not_recording(self):
-        pool = RecorderPool(folder=str(self.base))
+        pool = RecorderPool(folder=str(self.base), enabled=True)
         self.addCleanup(pool.close)
         self.assertTrue(pool.add('10.0.0.9', picture()))
         self.assertEqual(1, len(pool.segments('10.0.0.9')))

@@ -306,7 +306,8 @@ class MultiView(QDialog):
         self.locked=False
         self.layout_mode=self.capacity
         self.focused_tile=None
-        # 环形录像：每秒给正在播放的画面存一帧缩时画面，保留最近 10 分钟
+        # 环形录像：每秒给正在播放的画面存一帧缩时画面，保留最近 10 分钟。
+        # 测试进程里默认不录（见 recorder.default_enabled）
         from .recorder import RecorderPool
         self.recorders=RecorderPool()
         self.recorder_timer=QTimer(self)

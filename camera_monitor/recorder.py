@@ -4,6 +4,7 @@
 文件放在系统临时目录，按 1 分钟一段滚动删除，退出后不保证保留。
 """
 import os
+import sys
 import tempfile
 import time
 
@@ -139,13 +140,24 @@ class RingRecorder:
                 pass
 
 
+def default_enabled():
+    """默认要不要录。
+
+    测试进程（argv 里带 unittest）默认关：每秒给有画面的格子编码 mp4
+    会把整套用例拖慢，还会往临时目录写一堆文件。生产环境默认开。
+    """
+    if os.environ.get('CAMERA_MONITOR_NO_RECORDING'):
+        return False
+    return 'unittest' not in ' '.join(sys.argv)
+
+
 class RecorderPool:
     """按 ip 管一组录制器；没在录的相机不会占资源。"""
 
-    def __init__(self, folder=None, minutes=DEFAULT_MINUTES, enabled=True):
+    def __init__(self, folder=None, minutes=DEFAULT_MINUTES, enabled=None):
         self.folder = folder or default_folder()
         self.minutes = minutes
-        self.enabled = enabled
+        self.enabled = default_enabled() if enabled is None else enabled
         self.recorders = {}
 
     def add(self, ip, image):

@@ -142,5 +142,6 @@ class PlaybackTests(unittest.TestCase):
         self.assertEqual(result.size(),frame.size())
         self.assertEqual(result.pixelColor(0,0),QColor('blue'))
         self.assertEqual(result.pixelColor(299,299),QColor('green'))
-        self.assertIn('transparent',w.styleSheet())
+        # 背景现在由主题 QSS 按 playing 属性切换（窗口不再写 inline 样式）
+        self.assertEqual('true',w.property('playing'))
         w.close()

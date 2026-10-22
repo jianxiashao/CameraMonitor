@@ -11,7 +11,7 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QCheckBox, QSpinBox, QSizePolicy, QPlainTextEdit, QApplication)
 from .credentials import CredentialStore, CredentialError
-from . import alerts
+from . import alerts, theme
 from .device_names import DeviceNames
 from .connection_options import ConnectionOptions
 from .live_edge import LiveEdge
@@ -228,14 +228,32 @@ class VideoSurface(QLabel):
     activated = Signal()
     def __init__(self):
         super().__init__('连接后将在这里显示实时画面')
+        self.setObjectName('videoSurface')
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(480, 270)
-        self.setStyleSheet('background: #edf2f8; color: #64748b; border-radius: 8px;')
+        # 背景色跟主题走（QSS 的 QLabel#videoSurface），不在这里写死
+        self._playing = False
         self._image = None
         self.aspect_ratio = 16/9
         self.fill = False
         self.stretch = False
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+
+    def set_playing(self, playing):
+        """切到"有画面"状态时把占位背景让出来，让视频铺满。
+
+        只改一次内联样式，不做 unpolish/polish：那是整棵控件树的样式重算，
+        在 25 格的墙上每切一次都卡一下。
+        """
+        if playing == self._playing:
+            return
+        self._playing = playing
+        self.setProperty('playing', 'true' if playing else 'false')
+        self.setStyleSheet(theme.surface_style(playing))
+
+    def refresh_theme(self):
+        """主题切换后重新取一次配色（只有低频调用）。"""
+        self.setStyleSheet(theme.surface_style(self._playing))
 
     def set_stretch(self, stretch):
         self.stretch = stretch
@@ -258,7 +276,7 @@ class VideoSurface(QLabel):
             self.aspect_ratio=ratio
             self.aspect_changed.emit(ratio)
         self._image = image
-        self.setStyleSheet('background: transparent; color: #64748b;')
+        self.set_playing(True)
         mode = Qt.AspectRatioMode.KeepAspectRatioByExpanding if self.fill else Qt.AspectRatioMode.KeepAspectRatio
         if self.stretch:mode = Qt.AspectRatioMode.IgnoreAspectRatio
         pixmap = QPixmap.fromImage(image).scaled(self.size(), mode, Qt.TransformationMode.SmoothTransformation)
@@ -267,7 +285,7 @@ class VideoSurface(QLabel):
         self.setPixmap(pixmap)
 
     def reset(self, text):
-        self.setStyleSheet('background: #edf2f8; color: #64748b; border-radius: 8px;')
+        self.set_playing(False)
         self._image = None
         self.clear()
         self.setText(text)

@@ -11,6 +11,9 @@ talking to the server mid-test.
 import os
 import tempfile
 
+# 环形录像在测试里没有意义：每秒给有画面的格子编码 mp4 会拖慢整套用例
+os.environ.setdefault('CAMERA_MONITOR_NO_RECORDING', '1')
+
 from PySide6.QtCore import QSettings
 
 

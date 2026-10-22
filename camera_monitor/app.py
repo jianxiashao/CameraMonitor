@@ -27,6 +27,7 @@ from .bootstrap import allow_session_quit, log_startup, setup_logging  # noqa: F
 from .discovery import Device, interfaces, scan, validate_target_ip
 from .device_list import DeviceList
 from .multiview import MultiView
+from .playback import VideoSurface
 from .screen_lock import ScreenLock,request_unlock,PasswordSettingsDialog
 from .thumbnails import ThumbnailController,ThumbnailPreview
 from .connection_options import ConnectionOptions
@@ -158,7 +159,7 @@ class Window(QMainWindow):
         layout.addLayout(header)
         split=self.split=QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(split,1)
-        sidebar=self.sidebar=QWidget();sidebar.setMinimumWidth(215);sidebar.setMaximumWidth(255)
+        sidebar=self.sidebar=QWidget();sidebar.setMinimumWidth(228);sidebar.setMaximumWidth(276)
         side=QVBoxLayout(sidebar);side.setContentsMargins(0,0,12,0);side.setSpacing(10)
         label=QLabel('设备');label.setStyleSheet('font-size:23px;font-weight:700;');side.addWidget(label)
         self.device_filter=QLineEdit();self.device_filter.setPlaceholderText('搜索设备名称或 IP')
@@ -201,32 +202,32 @@ class Window(QMainWindow):
         self.play.hide()
         self.copy=QPushButton('复制 IP');self.copy.setEnabled(False);self.copy.clicked.connect(self.copy_ip)
 
-        self.batch_button=QPushButton('批量账号密码');self.batch_button.clicked.connect(self.show_batch_settings)
-        side.addWidget(self.batch_button)
-        # 现场排障：把日志、脱敏设置、各路诊断打成一个 zip 发给维护人员
-        self.diagnostics_button=QPushButton('导出诊断包')
-        self.diagnostics_button.setToolTip('打包运行日志与配置（不含密码），发给维护人员排查问题')
-        self.diagnostics_button.clicked.connect(self.export_diagnostics)
-        side.addWidget(self.diagnostics_button)
-        # 夜间值守刺眼，可以切到深色皮肤
-        self.theme_button=QPushButton(theme.label(theme.current()))
-        self.theme_button.setToolTip('切换浅色 / 深色界面')
-        self.theme_button.clicked.connect(self.toggle_theme)
-        side.addWidget(self.theme_button)
-        # 批量部署：样板机导出，其它电脑导入（不含密码）
-        self.config_button=QPushButton('配置导入 / 导出')
-        self.config_button.setToolTip('导出相机清单、名称与顺序，用于给其它电脑批量部署')
-        config_menu=QMenu(self.config_button)
-        config_menu.addAction('导出配置…', self.export_config_file)
-        config_menu.addAction('导入配置…', self.import_config_file)
-        self.config_button.setMenu(config_menu)
-        side.addWidget(self.config_button)
+        # 低频操作收进一个菜单：侧边栏的纵向空间要留给设备列表
+        more=QPushButton('更多操作')
+        more.setToolTip('批量账号密码、导出诊断包、配置导入导出、切换主题')
+        more_menu=QMenu(more)
+        more_menu.addAction('批量账号密码…', self.show_batch_settings)
+        more_menu.addAction('导出诊断包…', self.export_diagnostics)
+        more_menu.addSeparator()
+        more_menu.addAction('导出配置…', self.export_config_file)
+        more_menu.addAction('导入配置…', self.import_config_file)
+        more_menu.addSeparator()
+        self.theme_action=more_menu.addAction(theme.label(theme.current()), self.toggle_theme)
+        more.setMenu(more_menu)
         self.cloud_panel=CloudPanel()
         self.cloud_panel.login_requested.connect(self.cloud_login)
         self.cloud_panel.logout_requested.connect(self.cloud_logout)
         side.addWidget(self.cloud_panel)
-        self.detail_toggle=QPushButton('网络与设备详情');self.detail_toggle.setCheckable(True)
-        side.addWidget(self.detail_toggle)
+        # 底部固定操作条：低频按钮都进了菜单，这里只留两个常驻入口
+        divider=QFrame();divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet('color:#dce4ee; background:#dce4ee; max-height:1px;')
+        side.addWidget(divider)
+        tools=QHBoxLayout();tools.setSpacing(6)
+        tools.addWidget(more,1)
+        self.detail_toggle=QPushButton('设备详情');self.detail_toggle.setCheckable(True)
+        self.detail_toggle.setToolTip('展开网络与设备详情、运行日志')
+        tools.addWidget(self.detail_toggle,1)
+        side.addLayout(tools)
         self.diagnostics=QWidget();diagnostic_layout=QVBoxLayout(self.diagnostics)
         diagnostic_layout.setContentsMargins(0,0,0,0)
         self.details=QPlainTextEdit();self.details.setReadOnly(True);self.details.setMaximumHeight(100)
@@ -261,25 +262,13 @@ class Window(QMainWindow):
         panel.addWidget(self.settings_scroll)
         self.settings_panel.hide()
         self.settings_tab=QPushButton('连\n接\n设\n置',root)
-        self.settings_tab.setStyleSheet('padding:4px; color:#405570;')
+        self.settings_tab.setObjectName('settingsTab')
         self.settings_tab.clicked.connect(self.open_selected_settings)
         self.settings_tab.setToolTip('选择左侧设备后打开连接设置')
         split.addWidget(workspace);split.setStretchFactor(1,1);split.setSizes([225,1320])
-        self.setStyleSheet('''
-            QWidget { background:#f7f9fc; color:#203247; font-size:13px; }
-            QLabel#title { font-size:24px; font-weight:700; }
-            QLabel#muted { color:#64748b; font-size:12px; }
-            QPushButton { background:white; border:1px solid #d7dfe9; border-radius:6px; padding:7px 10px; }
-            QPushButton:hover { background:#eaf0fa; }
-            QPushButton#primary { background:#2463eb; color:white; border:1px solid #2463eb; font-weight:600; }
-            QPushButton:disabled { background:#e9edf2; color:#8693a4; border-color:#e0e5ec; }
-            QLineEdit,QSpinBox,QPlainTextEdit { background:white; border:1px solid #d7dfe9; border-radius:5px; padding:5px; }
-            QScrollArea { border:none; }
-            QFrame#settingsPanel { background:white; border:1px solid #cbd8e8; border-radius:8px; }
-            QProgressBar { border:none; background:#e5eaf2; }
-            QProgressBar::chunk { background:#2463eb; }
-            QSplitter::handle { background:#dce4ee; width:1px; }
-        ''')
+        # 界面样式由 bootstrap.main 在启动时贴一次（theme.apply）。
+        # 窗口自己 setStyleSheet 会盖掉主题；在这里 apply 又会让每个新建窗口都重算全局样式，
+        # 测试里构造上百个窗口会变慢，还会把字号等样式泄漏到别的用例里。
         self.escape_shortcut=QShortcut(QKeySequence('Escape'),self)
         self.escape_shortcut.activated.connect(self.exit_fullscreen)
         self.fullscreen_shortcut=QShortcut(QKeySequence('F11'),self)
@@ -389,7 +378,7 @@ class Window(QMainWindow):
     def position_overlay(self):
         root=self.centralWidget()
         self.settings_panel.setGeometry(max(0,root.width()-390),20,370,max(200,root.height()-40))
-        self.settings_tab.setGeometry(max(0,root.width()-48),26,36,108)
+        self.settings_tab.setGeometry(max(0,root.width()-48),max(26,(root.height()-108)//2),36,108)
         if hasattr(self,'managed'):self.managed.refresh_overlays()
         if hasattr(self,'welcome'):
             self.welcome.setGeometry(root.rect())
@@ -627,7 +616,11 @@ class Window(QMainWindow):
     def toggle_theme(self):
         mode = theme.toggle()
         theme.apply(QApplication.instance(), mode)
-        self.theme_button.setText(theme.label(mode))
+        if hasattr(self, 'theme_action'):
+            self.theme_action.setText(theme.label(mode))
+        # 画面区用的是内联样式，主题变了要挨个刷新一遍
+        for surface in self.findChildren(VideoSurface):
+            surface.refresh_theme()
 
     def export_diagnostics(self):
         """把日志、脱敏设置、各路诊断打成一个 zip，交给维护人员。"""
