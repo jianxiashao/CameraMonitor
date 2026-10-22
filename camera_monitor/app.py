@@ -15,9 +15,10 @@ from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QBoxLayout, QInputDialog, QCheckBox,
     QPlainTextEdit, QProgressBar, QSplitter, QFrame, QScrollArea, QStackedWidget, QSizePolicy,
-    QFileDialog, QMessageBox)
+    QFileDialog, QMessageBox, QMenu)
 from . import __version__
 from .diagnostics import collect as collect_diagnostics
+from .config_io import ConfigError, apply_config, export_config, load_config
 from . import theme
 from .bootstrap import main
 # 启动相关的函数住在 bootstrap.py，这里保留同名导入，旧的 `camera_monitor.app.setup_logging`
@@ -202,6 +203,14 @@ class Window(QMainWindow):
         self.theme_button.setToolTip('切换浅色 / 深色界面')
         self.theme_button.clicked.connect(self.toggle_theme)
         side.addWidget(self.theme_button)
+        # 批量部署：样板机导出，其它电脑导入（不含密码）
+        self.config_button=QPushButton('配置导入 / 导出')
+        self.config_button.setToolTip('导出相机清单、名称与顺序，用于给其它电脑批量部署')
+        config_menu=QMenu(self.config_button)
+        config_menu.addAction('导出配置…', self.export_config_file)
+        config_menu.addAction('导入配置…', self.import_config_file)
+        self.config_button.setMenu(config_menu)
+        side.addWidget(self.config_button)
         self.cloud_panel=CloudPanel()
         self.cloud_panel.login_requested.connect(self.cloud_login)
         self.cloud_panel.logout_requested.connect(self.cloud_logout)
@@ -562,6 +571,49 @@ class Window(QMainWindow):
                     # Restore presentation before prompting so Cancel cannot expose settings.
                     QTimer.singleShot(0,self.native_exit_requested)
 
+    def _default_folder(self):
+        """保存/打开对话框的默认目录：桌面上没有就退回用户主目录。"""
+        desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+        return desktop if os.path.isdir(desktop) else os.path.expanduser('~')
+
+    def export_config_file(self):
+        """把相机清单、名称、顺序导出成 json，给其它电脑批量部署用。"""
+        default = f'CameraMonitor-配置-{datetime.now():%Y%m%d-%H%M}.json'
+        path, _ = QFileDialog.getSaveFileName(self, '导出配置',
+                                              os.path.join(self._default_folder(), default), '配置文件 (*.json)')
+        if not path:
+            return
+        slots = []
+        if self.wall is not None:
+            slots = [tile.player.device.ip if tile else '' for tile in self.wall.slots[:self.wall.capacity]]
+        try:
+            saved = export_config(path, self.device_names, self.connection_options,
+                                  list(self.devices.values()),
+                                  capacity=self.wall.capacity if self.wall else 0, slots=slots)
+        except OSError:
+            QMessageBox.warning(self, '导出配置', '写入失败，请换一个目录再试。')
+            return
+        QMessageBox.information(self, '导出配置',
+                                f'已导出 {len(self.devices)} 台相机配置：\n{saved}\n\n文件里不含摄像头密码。')
+
+    def import_config_file(self):
+        """导入配置文件：写回名称、标注、连接方式与顺序，重启后生效。"""
+        path, _ = QFileDialog.getOpenFileName(self, '导入配置', self._default_folder(), '配置文件 (*.json)')
+        if not path:
+            return
+        try:
+            document = load_config(path)
+            count = apply_config(document, self.device_names, self.connection_options)
+        except ConfigError as exc:
+            QMessageBox.warning(self, '导入配置', str(exc))
+            return
+        except OSError:
+            QMessageBox.warning(self, '导入配置', '保存失败，请检查本机设置权限。')
+            return
+        QMessageBox.information(self, '导入配置',
+                                f'已导入 {count} 台相机的名称与连接方式。\n重启软件后生效。\n\n'
+                                '密码不在配置文件里，需要重新输入一次。')
+
     def toggle_theme(self):
         mode = theme.toggle()
         theme.apply(QApplication.instance(), mode)
@@ -570,9 +622,8 @@ class Window(QMainWindow):
     def export_diagnostics(self):
         """把日志、脱敏设置、各路诊断打成一个 zip，交给维护人员。"""
         default_name = f'CameraMonitor-诊断-{datetime.now():%Y%m%d-%H%M}.zip'
-        desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
-        folder = desktop if os.path.isdir(desktop) else os.path.expanduser('~')
-        path, _ = QFileDialog.getSaveFileName(self, '导出诊断包', os.path.join(folder, default_name), '压缩包 (*.zip)')
+        path, _ = QFileDialog.getSaveFileName(self, '导出诊断包',
+                                              os.path.join(self._default_folder(), default_name), '压缩包 (*.zip)')
         if not path:
             return
         data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
