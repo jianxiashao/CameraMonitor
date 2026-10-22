@@ -61,6 +61,13 @@ class CameraTile(QFrame):
         self.latency_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.latency_badge.hide()
         self.player.latency_changed.connect(self.show_latency)
+        # 画面异常（黑屏等）的红条：连上了但没画面时，光看缩略图判断不出来
+        self.alert_badge=QLabel(self.player.surface)
+        self.alert_badge.setWordWrap(True)
+        self.alert_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.alert_badge.setStyleSheet('color:#fff;background:rgba(185,28,28,220);font-size:12px;padding:3px 8px;border-radius:3px;')
+        self.alert_badge.hide()
+        self.player.alert_changed.connect(self.show_alert)
         self.status=QLabel('待连接',self)
         self.status.setStyleSheet('background:transparent; color:#8191a5; font-size:12px;')
         self.status.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
@@ -127,6 +134,21 @@ class CameraTile(QFrame):
         self.latency_badge.setStyleSheet(f'color:#fff;background:{color};font-size:12px;padding:2px 6px;border-radius:3px;')
         self.place_latency_badge()
 
+    def show_alert(self,message):
+        """画面异常的红条，空字符串表示恢复正常。"""
+        if not message:
+            self.alert_badge.hide()
+            return
+        surface=self.player.surface
+        self.alert_badge.setMaximumWidth(max(80,surface.width()-16))
+        self.alert_badge.setText(message)
+        self.alert_badge.adjustSize()
+        x=max(0,(surface.width()-self.alert_badge.width())//2)
+        y=max(8,surface.height()//2-self.alert_badge.height()//2)
+        self.alert_badge.move(x,y)
+        self.alert_badge.show()
+        self.alert_badge.raise_()
+
     def place_latency_badge(self):
         surface=self.player.surface
         self.latency_badge.adjustSize()
@@ -152,6 +174,7 @@ class CameraTile(QFrame):
         y=max(0,self.player.surface.height()-self.name_overlay.height()-8) if 'bottom' in self.name_corner else 8
         self.name_overlay.move(x,y);self.name_overlay.setVisible(True);self.name_overlay.raise_()
         if hasattr(self,'latency_badge') and not self.latency_badge.isHidden():self.place_latency_badge()
+        if hasattr(self,'alert_badge') and not self.alert_badge.isHidden():self.show_alert(self.alert_badge.text())
         if fullscreen:self.controls.hide()
 
     def resizeEvent(self,event):

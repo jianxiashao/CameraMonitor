@@ -11,6 +11,7 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QCheckBox, QSpinBox, QSizePolicy, QPlainTextEdit, QApplication)
 from .credentials import CredentialStore, CredentialError
+from . import alerts
 from .device_names import DeviceNames
 from .connection_options import ConnectionOptions
 from .live_edge import LiveEdge
@@ -61,6 +62,8 @@ class Decoder(QThread):
     diagnostic = Signal(str)
     # 落后实时多少秒（每两秒报一次）：界面上用它显示"实时/延迟/追赶"
     latency = Signal(float)
+    # 画面异常提示（目前只有黑屏）；空字符串表示恢复正常
+    alert = Signal(str)
 
     def __init__(self, url, parent=None, max_width=1920, transport='tcp'):
         super().__init__(parent)
@@ -73,6 +76,7 @@ class Decoder(QThread):
         self._frame = None
         self.received = False
         self._last_latency_report = 0.0
+        self._black_watch = alerts.BlackScreenWatch()
 
     def take_frame(self):
         with self._lock:
@@ -132,8 +136,16 @@ class Decoder(QThread):
                                 plane = rgb.planes[0]
                                 # PySide6 的 QImage 会自己持有这串 bytes，不用再 .copy()：
                                 # 1080p 一帧 6 MB，每帧就省下一次整帧拷贝
-                                image = QImage(bytes(plane), width, height, plane.line_size, QImage.Format.Format_RGB888)
+                                data = bytes(plane)
+                                image = QImage(data, width, height, plane.line_size, QImage.Format.Format_RGB888)
                                 with self._lock: self._frame = image
+                                # 顺手判断黑屏：连上了却一直是黑画面是现场最常见的问题之一
+                                state = self._black_watch.observe(
+                                    alerts.sample_is_black(data, width, height, plane.line_size))
+                                if state == 'alert':
+                                    self.alert.emit('画面可能全黑：请检查镜头是否被遮挡、红外是否开启、相机是否通电')
+                                elif state == 'clear':
+                                    self.alert.emit('')
                                 now = time.monotonic()
                                 if now - self._last_latency_report >= LATENCY_REPORT_INTERVAL:
                                     self._last_latency_report = now
@@ -274,6 +286,8 @@ class PlayerWindow(QDialog):
     connection_changed = Signal()
     # 播放落后实时多少秒，监控墙上的延迟指示灯用它
     latency_changed = Signal(float)
+    # 画面异常提示（空字符串 = 恢复正常）
+    alert_changed = Signal(str)
 
     def __init__(self, device, parent=None, credential_store=None, device_names=None, connection_options=None):
         super().__init__(parent)
@@ -578,6 +592,7 @@ class PlayerWindow(QDialog):
         self.decoder = Decoder(url, self, max_width=self.preview_width, transport=self.transport.currentData())
         self.decoder.diagnostic.connect(self.connection_diagnostics.appendPlainText)
         self.decoder.latency.connect(self.latency_changed)
+        self.decoder.alert.connect(self.alert_changed)
         self.decoder.recovering.connect(self.on_recovering)
         self.decoder.ready.connect(self.on_ready)
         self.decoder.error.connect(self.report_error)
