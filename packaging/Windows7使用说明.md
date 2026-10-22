@@ -65,6 +65,13 @@ set QT_QPA_PLATFORM=
 > 直接跑测试时要让 `tests/` 里的 `from PySide6...` 导入落到 PySide2 上：
 > `set CAMERA_MONITOR_ROOT=%CD%` 并把 `%CD%\packaging\win7` 放进 `PYTHONPATH`
 > （该目录里的 `sitecustomize.py` 会在解释器启动时启用兼容层）。
+>
+> 同一个文件还负责给源码环境补上 TLS：Qt 5.15 的 QtNetwork 运行时才去找 OpenSSL 1.1，
+> 它会把 CPython 3.8 自带的 `libssl-1_1.dll` / `libcrypto-1_1.dll` 复制成
+> `libssl-1_1-x64.dll` / `libcrypto-1_1-x64.dll` 放进 `packaging\win7\openssl\`
+> 并加到 `PATH`。少了这一步，`QSslSocket.supportsSsl()` 会是 False，云端下行通道
+> （wss）连不上且没有任何报错——`tests/test_launcher.py` 就是靠这条断言拦住的。
+> 该目录已被 `.gitignore` 忽略，不需要手工维护。
 
 ## GitHub 云端编译
 

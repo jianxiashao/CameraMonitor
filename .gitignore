@@ -24,6 +24,9 @@ artifacts/
 test-output.txt
 *.log
 
+# 跑 Windows 7 测试时由 packaging/win7/sitecustomize.py 生成的 OpenSSL 副本
+packaging/win7/openssl/
+
 # 编辑器 / 系统 / 工具目录
 .reasonix/
 .idea/
