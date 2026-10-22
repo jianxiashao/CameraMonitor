@@ -1,11 +1,15 @@
+# Python 虚拟环境与缓存
 .venv/
 .venv-win/
 .venv-win7/
 __pycache__/
 *.pyc
-.DS_Store
-.reasonix/
-artifacts/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# 打包产物：exe 由 Actions 生成后从 Artifacts 下载，不进仓库
 build/
 dist/
 build-win/
@@ -13,5 +17,21 @@ dist-win/
 build-win7/
 dist-win7/
 releases/
+artifacts/
+/*.spec
+
+# 测试与运行日志
+test-output.txt
+*.log
+
+# 编辑器 / 系统 / 工具目录
+.reasonix/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 凭据与证书
 *.key
 *.crt
