@@ -44,26 +44,27 @@ class DeviceRow(QPushButton):
 
     def __init__(self, compact=False):
         super().__init__()
+        self.setObjectName('deviceRow')
         self.setCheckable(True)
         if compact: self.setFixedHeight(78)
         else: self.setMinimumHeight(80)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setAccessibleDescription('点击选择摄像头，双击或按回车播放视频')
-        self.setStyleSheet('''QPushButton {background:transparent; border:none; border-bottom:1px solid #e9eef5; border-radius:0; padding:8px;}
-            QPushButton:checked {background:#e5efff; border-left:3px solid #2463eb;}
-            QLabel {background:transparent; border:none;}''')
+        # 行背景、分隔线、选中态、缩略图底色都在 theme.py 里：
+        # 写在这里会盖掉主题，深色模式下这一列会突兀地亮着
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6 if compact else 10, 5, 6 if compact else 10, 5)
         layout.setSpacing(7 if compact else 4)
         self.thumbnail_image = None
         self.thumbnail = QPushButton('待获取画面')
+        self.thumbnail.setObjectName('deviceThumbnail')
         self.thumbnail.setFixedSize(80 if compact else 112, 45 if compact else 64)
-        self.thumbnail.setIconSize(QSize(76 if compact else 108, 41 if compact else 60))
+        # 图标铺满按钮：有图和没图两种状态看起来一样大
+        self.thumbnail.setIconSize(QSize(80 if compact else 112, 45 if compact else 64))
         self.thumbnail.setAccessibleName('设备缩略图，点击查看大图')
         self.thumbnail.setEnabled(False)
         self.thumbnail.clicked.connect(self.thumbnailClicked.emit)
-        self.thumbnail.setStyleSheet('QPushButton {padding:0; border:0; border-radius:4px; background:#edf2f8; color:#64748b; font-size:11px;}')
         layout.addWidget(self.thumbnail, 0, Qt.AlignmentFlag.AlignVCenter)
         text_layout = QVBoxLayout() if compact else layout
         if compact:
@@ -83,8 +84,9 @@ class DeviceRow(QPushButton):
             self.cells[2].label.hide()
             self.cells[3].label.hide()
             self.cells[1].label.setStyleSheet("font-weight:600; font-size:12px;")
-            self.cells[0].label.setStyleSheet("font-size:11px; color:#475569;")
-            self.cells[4].label.setStyleSheet("font-size:11px; color:#64748b;")
+            self.cells[0].label.setStyleSheet("font-size:11px;")
+            self.cells[4].label.setObjectName('muted')
+            self.cells[4].label.setStyleSheet("font-size:11px;")
 
     def set_thumbnail(self, image, status):
         self.thumbnail_image = image.copy() if image is not None and not image.isNull() else None

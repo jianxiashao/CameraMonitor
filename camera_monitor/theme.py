@@ -18,7 +18,7 @@ APPLICATION = 'CameraMonitor'
 # 两套样式必须覆盖同一组控件，颜色之外的结构（圆角、内边距、字号）保持完全一致
 _STRUCTURE = """
 QLabel#title { font-size:24px; font-weight:700; }
-QPushButton { border-radius:6px; padding:7px 10px; min-height:18px; }
+QPushButton { border-radius:6px; padding:7px 10px; }
 QPushButton#primary { font-weight:600; }
 QLineEdit, QSpinBox, QPlainTextEdit { border-radius:5px; padding:5px; }
 QComboBox { border-radius:5px; padding:5px 8px; }
@@ -51,6 +51,11 @@ QSplitter::handle { background:#dce4ee; }
 QPushButton#settingsTab { color:#405570; }
 QLabel#videoSurface { background:#edf2f8; color:#64748b; border-radius:8px; }
 QLabel#videoSurface[playing="true"] { background:transparent; }
+QPushButton#deviceRow { background:transparent; border:none; border-bottom:1px solid #e9eef5; border-radius:0; padding:8px; }
+QPushButton#deviceRow:hover { background:#f2f6fc; }
+QPushButton#deviceRow:checked { background:#e5efff; border-left:3px solid #2463eb; }
+QPushButton#deviceRow QLabel { background:transparent; border:none; }
+QPushButton#deviceThumbnail { padding:0; border:0; border-radius:4px; background:#edf2f8; color:#64748b; font-size:11px; }
 """
 
 DARK_QSS = """
@@ -73,6 +78,11 @@ QSplitter::handle { background:#22303f; }
 QPushButton#settingsTab { color:#a8b6c8; }
 QLabel#videoSurface { background:#0f1720; color:#7a8ba0; border-radius:8px; }
 QLabel#videoSurface[playing="true"] { background:transparent; }
+QPushButton#deviceRow { background:transparent; border:none; border-bottom:1px solid #22303f; border-radius:0; padding:8px; }
+QPushButton#deviceRow:hover { background:#1a2432; }
+QPushButton#deviceRow:checked { background:#1d2a3d; border-left:3px solid #3b82f6; }
+QPushButton#deviceRow QLabel { background:transparent; border:none; }
+QPushButton#deviceThumbnail { padding:0; border:0; border-radius:4px; background:#1b2534; color:#93a3b8; font-size:11px; }
 """
 
 
