@@ -113,6 +113,7 @@ class MainWiringTests(unittest.TestCase):
             def setApplicationName(self, name): pass
             def setWindowIcon(self, icon): pass
             def setStyle(self, style): pass
+            def setStyleSheet(self, sheet): pass
             def exec(self): return 0
 
         class FakeWindow:

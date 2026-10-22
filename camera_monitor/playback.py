@@ -35,6 +35,9 @@ PROBE_MICROSECONDS = '1000000'
 RECONNECT_FIRST = 3.0
 RECONNECT_MAX = 30.0
 
+# 延迟指示灯每两秒更新一次：比这更密没有意义，只会白刷界面
+LATENCY_REPORT_INTERVAL = 2.0
+
 
 def retry_delay(retries, jitter=lambda: random.uniform(0.8, 1.2)):
     """第 retries 次重连前等多久（retries 从 1 开始）。"""
@@ -56,6 +59,8 @@ class Decoder(QThread):
     recovering = Signal(str)
     error = Signal(str)
     diagnostic = Signal(str)
+    # 落后实时多少秒（每两秒报一次）：界面上用它显示"实时/延迟/追赶"
+    latency = Signal(float)
 
     def __init__(self, url, parent=None, max_width=1920, transport='tcp'):
         super().__init__(parent)
@@ -67,6 +72,7 @@ class Decoder(QThread):
         self._lock = threading.Lock()
         self._frame = None
         self.received = False
+        self._last_latency_report = 0.0
 
     def take_frame(self):
         with self._lock:
@@ -128,6 +134,10 @@ class Decoder(QThread):
                                 # 1080p 一帧 6 MB，每帧就省下一次整帧拷贝
                                 image = QImage(bytes(plane), width, height, plane.line_size, QImage.Format.Format_RGB888)
                                 with self._lock: self._frame = image
+                                now = time.monotonic()
+                                if now - self._last_latency_report >= LATENCY_REPORT_INTERVAL:
+                                    self._last_latency_report = now
+                                    self.latency.emit(round(edge.behind, 2))
                             frames += 1
                             if not session_received:
                                 session_received = self.received = True
@@ -262,6 +272,8 @@ class PlayerWindow(QDialog):
     credentials_required = Signal()
     # 这一格的连接配置有改动（账号密码、传输方式、取流方式、通道、手动地址）
     connection_changed = Signal()
+    # 播放落后实时多少秒，监控墙上的延迟指示灯用它
+    latency_changed = Signal(float)
 
     def __init__(self, device, parent=None, credential_store=None, device_names=None, connection_options=None):
         super().__init__(parent)
@@ -565,6 +577,7 @@ class PlayerWindow(QDialog):
         self.set_busy(True)
         self.decoder = Decoder(url, self, max_width=self.preview_width, transport=self.transport.currentData())
         self.decoder.diagnostic.connect(self.connection_diagnostics.appendPlainText)
+        self.decoder.latency.connect(self.latency_changed)
         self.decoder.recovering.connect(self.on_recovering)
         self.decoder.ready.connect(self.on_ready)
         self.decoder.error.connect(self.report_error)

@@ -55,6 +55,12 @@ class CameraTile(QFrame):
         self.name_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.name_overlay.hide()
         parent.device_names.appearance_changed.connect(self.refresh_overlay)
+        # 延迟指示灯：现场排查"画面怎么慢了几秒"时，一眼看出是哪一路在追帧
+        self.latency_badge=QLabel(self.player.surface)
+        self.latency_badge.setTextFormat(Qt.TextFormat.PlainText)
+        self.latency_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.latency_badge.hide()
+        self.player.latency_changed.connect(self.show_latency)
         self.status=QLabel('待连接',self)
         self.status.setStyleSheet('background:transparent; color:#8191a5; font-size:12px;')
         self.status.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
@@ -106,6 +112,33 @@ class CameraTile(QFrame):
         self.name_overlay.setStyleSheet(f'color:{color};background:rgba(0,0,0,95);font-size:16px;font-weight:600;padding:4px 8px;border-radius:3px;')
         self.layout_contents()
 
+    def show_latency(self,behind):
+        """绿=实时，黄=略滞后，红=正在追赶。
+
+        阈值与 live_edge 的追帧策略对齐：0.5 秒以内看不出来，2 秒以上已经在查账了。
+        """
+        if behind < 0.5:
+            color,text='#15803d',f'实时 {behind:.1f}s'
+        elif behind < 2.0:
+            color,text='#b45309',f'延迟 {behind:.1f}s'
+        else:
+            color,text='#b91c1c',f'追赶 {behind:.1f}s'
+        self.latency_badge.setText(text)
+        self.latency_badge.setStyleSheet(f'color:#fff;background:{color};font-size:12px;padding:2px 6px;border-radius:3px;')
+        self.place_latency_badge()
+
+    def place_latency_badge(self):
+        surface=self.player.surface
+        self.latency_badge.adjustSize()
+        x=max(0,surface.width()-self.latency_badge.width()-8)
+        y=8
+        # 名字标签也在右上角时，指示灯挪到它下面，别互相压住
+        if 'right' in getattr(self,'name_corner','') and not self.name_overlay.isHidden():
+            y=8+self.name_overlay.height()+4
+        self.latency_badge.move(x,y)
+        self.latency_badge.show()
+        self.latency_badge.raise_()
+
     def layout_contents(self):
         if not hasattr(self,'controls'):return
         fullscreen=self.monitor.presentation
@@ -118,6 +151,7 @@ class CameraTile(QFrame):
         x=max(0,self.player.surface.width()-self.name_overlay.width()-8) if 'right' in self.name_corner else 8
         y=max(0,self.player.surface.height()-self.name_overlay.height()-8) if 'bottom' in self.name_corner else 8
         self.name_overlay.move(x,y);self.name_overlay.setVisible(True);self.name_overlay.raise_()
+        if hasattr(self,'latency_badge') and not self.latency_badge.isHidden():self.place_latency_badge()
         if fullscreen:self.controls.hide()
 
     def resizeEvent(self,event):

@@ -4,16 +4,21 @@ from .choices import ChoiceButton as QComboBox
 import json
 import logging
 import logging.handlers
+import os
 import platform
 import threading
 import time
-from PySide6.QtCore import QCoreApplication, QThread, Signal, Qt, QTimer, QEvent, QSettings
+from datetime import datetime
+from PySide6.QtCore import QCoreApplication, QThread, Signal, Qt, QTimer, QEvent, QSettings, QStandardPaths
 from PySide6.QtGui import QShortcut, QKeySequence, QIcon
 from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QBoxLayout, QInputDialog, QCheckBox,
-    QPlainTextEdit, QProgressBar, QSplitter, QFrame, QScrollArea, QStackedWidget, QSizePolicy)
+    QPlainTextEdit, QProgressBar, QSplitter, QFrame, QScrollArea, QStackedWidget, QSizePolicy,
+    QFileDialog, QMessageBox)
 from . import __version__
+from .diagnostics import collect as collect_diagnostics
+from . import theme
 from .bootstrap import main
 # 启动相关的函数住在 bootstrap.py，这里保留同名导入，旧的 `camera_monitor.app.setup_logging`
 # 之类引用（测试与打包入口）继续可用
@@ -187,6 +192,16 @@ class Window(QMainWindow):
 
         self.batch_button=QPushButton('批量账号密码');self.batch_button.clicked.connect(self.show_batch_settings)
         side.addWidget(self.batch_button)
+        # 现场排障：把日志、脱敏设置、各路诊断打成一个 zip 发给维护人员
+        self.diagnostics_button=QPushButton('导出诊断包')
+        self.diagnostics_button.setToolTip('打包运行日志与配置（不含密码），发给维护人员排查问题')
+        self.diagnostics_button.clicked.connect(self.export_diagnostics)
+        side.addWidget(self.diagnostics_button)
+        # 夜间值守刺眼，可以切到深色皮肤
+        self.theme_button=QPushButton(theme.label(theme.current()))
+        self.theme_button.setToolTip('切换浅色 / 深色界面')
+        self.theme_button.clicked.connect(self.toggle_theme)
+        side.addWidget(self.theme_button)
         self.cloud_panel=CloudPanel()
         self.cloud_panel.login_requested.connect(self.cloud_login)
         self.cloud_panel.logout_requested.connect(self.cloud_logout)
@@ -546,6 +561,30 @@ class Window(QMainWindow):
                 else:
                     # Restore presentation before prompting so Cancel cannot expose settings.
                     QTimer.singleShot(0,self.native_exit_requested)
+
+    def toggle_theme(self):
+        mode = theme.toggle()
+        theme.apply(QApplication.instance(), mode)
+        self.theme_button.setText(theme.label(mode))
+
+    def export_diagnostics(self):
+        """把日志、脱敏设置、各路诊断打成一个 zip，交给维护人员。"""
+        default_name = f'CameraMonitor-诊断-{datetime.now():%Y%m%d-%H%M}.zip'
+        desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+        folder = desktop if os.path.isdir(desktop) else os.path.expanduser('~')
+        path, _ = QFileDialog.getSaveFileName(self, '导出诊断包', os.path.join(folder, default_name), '压缩包 (*.zip)')
+        if not path:
+            return
+        data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+        log_dir = os.path.join(data, 'logs') if data else ''
+        try:
+            saved = collect_diagnostics(path, log_dir=log_dir,
+                                        settings=self.device_names.settings,
+                                        players=list(self.players))
+        except Exception:
+            QMessageBox.warning(self, '导出诊断包', '导出失败，请换一个目录再试。')
+            return
+        QMessageBox.information(self, '导出诊断包', f'已导出到：\n{saved}\n\n文件里不含摄像头密码与云端令牌。')
 
     def show_batch_settings(self):
         if self.presentation or not self.welcome.isHidden():return

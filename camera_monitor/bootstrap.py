@@ -14,7 +14,7 @@ from PySide6.QtCore import QStandardPaths
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from . import __version__, crash_guard, single_instance
+from . import __version__, crash_guard, single_instance, theme
 from .autostart import FLAG as AUTOSTART_FLAG
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,8 @@ def main():
     from .app import Window   # 延迟导入：app 反过来要用本模块的启动函数
     app.setWindowIcon(QIcon(str(Path(__file__).parent / 'assets' / 'app-icon.png')))
     app.setStyle('Fusion')
+    # 夜间值守用的深色皮肤，上次选过就沿用
+    theme.apply(app, theme.current())
     window = Window()
     allow_session_quit(app, window)
     window.show()
