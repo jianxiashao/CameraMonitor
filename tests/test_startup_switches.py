@@ -59,16 +59,21 @@ class StartupSwitchTests(unittest.TestCase):
 
     # ---------- 工具栏 ----------
 
-    def test_both_switches_sit_on_the_wall_toolbar(self):
+    def test_both_switches_live_in_the_settings_menu(self):
         window = self.window()
-        toolbar = window.wall.toolbar_widget
+        texts = [action.text() for action in window.wall.settings_menu.actions()]
 
-        # 开关现在和其它设置项一起放在工具栏右侧区里，仍然属于这条工具栏
-        for box in (window.autostart_toggle, window.start_fullscreen_toggle):
-            self.assertTrue(toolbar.isAncestorOf(box), '开关要留在监控墙工具栏上')
-            self.assertIs(window.wall.toolbar_right, box.parentWidget())
-        self.assertEqual('开机自动启动', window.autostart_toggle.text())
-        self.assertEqual('启动后自动全屏', window.start_fullscreen_toggle.text())
+        # 两个开关的入口收在工具栏「设置」菜单里，不再占工具栏位置
+        self.assertIn('开机自动启动', texts)
+        self.assertIn('启动后自动全屏', texts)
+
+        # 菜单项与勾选框双向同步：点菜单等于点勾选框
+        window.autostart_action.setChecked(True)
+        self.assertTrue(window.autostart_toggle.isChecked())
+        window.start_fullscreen_action.setChecked(True)
+        self.assertTrue(window.start_fullscreen_toggle.isChecked())
+        window.autostart_toggle.setChecked(False)
+        self.assertFalse(window.autostart_action.isChecked())
 
     def test_the_autostart_box_shows_the_real_startup_entry(self):
         window = self.window(FakeAutoStart(enabled=True), autostart=False)

@@ -300,6 +300,8 @@ class MultiView(QDialog):
     camera_alert=Signal(str,str)
     # 一键巡检：让上层给这一路重新取一张画面（复用缩略图那套 ONVIF + 抓帧）
     patrol_requested=Signal(str)
+    # 巡检汇总文本：交给上层弹窗/状态栏显示（本控件的提示标签默认是隐藏的）
+    patrol_finished=Signal(str)
     fullscreen_requested=Signal()
     tile_removing=Signal(object)
     settings_requested=Signal(object)
@@ -433,8 +435,7 @@ class MultiView(QDialog):
 
         self.organization_button=QPushButton('机构名称')
         self.organization_button.setToolTip('设置全屏时显示在顶部的机构名称')
-        # 最左侧，紧跟后面的云端同步 / 大屏密码 / 启动开关，一起右对齐
-        self.right_layout.insertWidget(0, self.organization_button)
+        # 入口在工具栏「设置」菜单里（由上层添加菜单项），不再占工具栏位置
         self.organization_panel=QWidget()
         organization_layout=QHBoxLayout(self.organization_panel)
         organization_layout.addWidget(QLabel('全屏顶部名称'))
@@ -445,7 +446,7 @@ class MultiView(QDialog):
         save=QPushButton('保存');organization_layout.addWidget(save)
         save.clicked.connect(self.save_organization)
         self.organization_input.returnPressed.connect(self.save_organization)
-        self.organization_button.clicked.connect(lambda:self.organization_panel.setVisible(self.organization_panel.isHidden()))
+        self.organization_button.clicked.connect(self.toggle_organization)
         layout.addWidget(self.organization_panel);self.organization_panel.hide()
         self.organization_header=QLabel(self.organization_input.text().strip())
         self.organization_header.setTextFormat(Qt.TextFormat.PlainText)
@@ -776,30 +777,43 @@ class MultiView(QDialog):
             if image is not None:
                 self.recorders.add(tile.player.device.ip, image)
 
-    def start_patrol(self):
-        """一键巡检：让每路重新取一张画面，并汇总当前状态。
+    def toggle_organization(self):
+        """展开 / 收起「全屏顶部名称」输入条（入口在工具栏「设置」菜单里）。"""
+        self.organization_panel.setVisible(self.organization_panel.isHidden())
 
-        取帧走缩略图那套（ONVIF 解析 + 抓一帧，并发 2）；这里先把汇总说清楚，
-        几秒后左侧缩略图会各自更新成最新画面。
+    def start_patrol(self):
+        """一键巡检：逐路刷新画面，并把结果汇总给上层显示。
+
+        正在播放的用当前状态判断；没在播的会真的去抓一帧（和缩略图同一条路径），
+        所以几秒后左侧列表的缩略图会更新成最新画面。
         """
         if self.closing:
             return
         tiles = list(self.tiles)
         if not tiles:
-            self.message.setText('巡检：监控墙上还没有相机')
+            self.patrol_finished.emit('巡检：监控墙上还没有相机')
             return
+        healthy, abnormal, idle = [], [], []
         for tile in tiles:
-            self.patrol_requested.emit(tile.player.device.ip)
-        healthy = [t for t in tiles if not t.alert_message and getattr(t.player, 'rendering', False)]
-        abnormal = [t for t in tiles if t.alert_message]
-        idle = [t for t in tiles if not t.alert_message and not getattr(t.player, 'rendering', False)]
-        parts = [f'巡检 {len(tiles)} 路：{len(healthy)} 路正常']
+            ip = tile.player.device.ip
+            self.patrol_requested.emit(ip)
+            if tile.alert_message:
+                abnormal.append(f'{ip}（{tile.alert_message.split("：")[0]}）')
+            elif getattr(tile.player, 'rendering', False):
+                behind = tile.last_latency
+                healthy.append(ip + (f'（落后 {behind:.0f} 秒）' if behind and behind >= 1 else ''))
+            else:
+                idle.append(ip)
+        lines = [f'巡检 {len(tiles)} 路：正常 {len(healthy)} 路，异常 {len(abnormal)} 路，未播放 {len(idle)} 路']
         if abnormal:
-            parts.append(f'{len(abnormal)} 路异常（{abnormal[0].player.device.ip} 等）')
+            lines.append('异常：' + '、'.join(abnormal))
         if idle:
-            parts.append(f'{len(idle)} 路未在播放')
-        self.message.setText('，'.join(parts) + ' · 正在逐路取画面…')
-        logger.info('一键巡检：%s', '，'.join(parts))
+            lines.append('未播放：' + '、'.join(idle))
+        if healthy:
+            lines.append('正常：' + '、'.join(healthy))
+        lines.append('画面快照正在逐路刷新，几秒后可在左侧列表看到最新画面。')
+        self.patrol_finished.emit('\n'.join(lines))
+        logger.info('一键巡检：%s', lines[0])
 
     def stop_everything(self):
         self.reconnect_timer.stop()

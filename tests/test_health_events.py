@@ -82,6 +82,60 @@ class AlertEventTests(unittest.TestCase):
         self.assertEqual(20, len(window.pending_events))
 
 
+class PatrolTests(unittest.TestCase):
+    """一键巡检：点一下按钮必须真的有反馈（之前结果写进了隐藏标签）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def window_with(self, *ips):
+        window = make_window(self)
+        requested = []
+        window._patrol_requested = requested
+        window.thumbnails.request = lambda device: requested.append(device.ip)
+        for ip in ips:
+            device = Device(ip)
+            window.add_device(device)        # 进设备列表：巡检按 ip 在 self.devices 里找
+            window.wall.add_device(device)   # 同时摆到监控墙上
+        return window
+
+    def test_clicking_patrol_refreshes_every_camera_and_reports(self):
+        window = self.window_with('10.0.0.1', '10.0.0.2')
+        results = []
+        window.wall.patrol_finished.connect(results.append)
+
+        window.wall.patrol.click()
+
+        self.assertEqual(['10.0.0.1', '10.0.0.2'], window._patrol_requested)
+        self.assertEqual(1, len(results), '点击后必须给出汇总')
+        self.assertIn('巡检 2 路', results[0])
+        self.assertIn('未播放 2 路', results[0])
+
+    def test_an_alerting_camera_is_listed_as_abnormal(self):
+        window = self.window_with('10.0.0.1', '10.0.0.2')
+        window.wall.tiles[0].show_alert('画面可能全黑：请检查镜头')
+        results = []
+        window.wall.patrol_finished.connect(results.append)
+
+        window.wall.start_patrol()
+
+        self.assertIn('异常 1 路', results[0])
+        self.assertIn('10.0.0.1', results[0])
+
+    def test_the_result_reaches_the_window_status_bar(self):
+        window = self.window_with('10.0.0.3')
+        window.show_patrol_result('巡检 1 路：正常 0 路，异常 0 路，未播放 1 路\n未播放：10.0.0.3')
+        self.assertIn('巡检 1 路', window.status.text())
+
+    def test_an_empty_wall_says_so(self):
+        window = make_window(self)
+        results = []
+        window.wall.patrol_finished.connect(results.append)
+        window.wall.start_patrol()
+        self.assertIn('还没有相机', results[0])
+
+
 class HeartbeatHealthTests(unittest.TestCase):
     def test_ping_carries_the_health_snapshot(self):
         sent = []

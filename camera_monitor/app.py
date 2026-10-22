@@ -236,8 +236,18 @@ class Window(QMainWindow):
         self.wall.settings_requested.connect(self.show_settings)
         self.wall.tile_removing.connect(self.remove_settings)
         self.wall.patrol_requested.connect(self.refresh_snapshot)
+        self.wall.patrol_finished.connect(self.show_patrol_result)
         # 工具栏「设置」菜单：原来侧边栏「更多操作」里的功能全在这里
         settings_menu = self.wall.settings_menu
+        settings_menu.addAction('机构名称…', self.wall.toggle_organization)
+        settings_menu.addAction('大屏密码…', self.show_password_settings)
+        settings_menu.addSeparator()
+        # 两个启动开关做成可勾选菜单项；与勾选框的双向同步在勾选框创建后再接
+        self.autostart_action = settings_menu.addAction('开机自动启动')
+        self.autostart_action.setCheckable(True)
+        self.start_fullscreen_action = settings_menu.addAction('启动后自动全屏')
+        self.start_fullscreen_action.setCheckable(True)
+        settings_menu.addSeparator()
         settings_menu.addAction('批量账号密码…', self.show_batch_settings)
         settings_menu.addAction('导出诊断包…', self.export_diagnostics)
         settings_menu.addSeparator()
@@ -288,7 +298,8 @@ class Window(QMainWindow):
         self.restart_check_timer.start()
         self.password_settings=QPushButton('大屏密码')
         self.password_settings.clicked.connect(self.show_password_settings)
-        # 完整模式的两个开关。工具栏在傻瓜模式下整条隐藏，这两个也跟着看不见
+        # 完整模式的两个开关：入口在工具栏「设置」菜单里，勾选框本身不显示，
+        # 只作为状态载体（菜单项与它双向同步），原有逻辑和测试都不受影响
         self.autostart_toggle=QCheckBox('开机自动启动')
         self.autostart_toggle.setToolTip('电脑开机登录后自动打开监控软件。')
         self.start_fullscreen_toggle=QCheckBox('启动后自动全屏')
@@ -296,12 +307,13 @@ class Window(QMainWindow):
         self.refresh_startup_toggles()
         self.autostart_toggle.toggled.connect(self.set_autostart_wanted)
         self.start_fullscreen_toggle.toggled.connect(self.set_start_fullscreen)
-        # 右侧统一右对齐：机构名称 → 大屏密码 → 两个启动开关 → 云端同步 → 设置 → 全屏
-        right=self.wall.right_layout
-        organization_index=right.indexOf(self.wall.organization_button)
-        right.insertWidget(organization_index+1, self.password_settings)
-        right.insertWidget(organization_index+2, self.autostart_toggle)
-        right.insertWidget(organization_index+3, self.start_fullscreen_toggle)
+        # 菜单项与勾选框双向同步（值相同不会反复触发）
+        self.autostart_action.toggled.connect(self.autostart_toggle.setChecked)
+        self.autostart_toggle.toggled.connect(self.autostart_action.setChecked)
+        self.start_fullscreen_action.toggled.connect(self.start_fullscreen_toggle.setChecked)
+        self.start_fullscreen_toggle.toggled.connect(self.start_fullscreen_action.setChecked)
+        self.autostart_action.setChecked(self.autostart_toggle.isChecked())
+        self.start_fullscreen_action.setChecked(self.start_fullscreen_toggle.isChecked())
         self.applying_cloud=False
         # 正在回放本机快照：这期间本机存储发出的「变了」是回放自己写的，不能再存一遍
         self.replaying_local=False
@@ -639,6 +651,23 @@ class Window(QMainWindow):
         device = self.devices.get(ip)
         if device is not None:
             self.thumbnails.request(device)
+
+    def show_patrol_result(self, text):
+        """一键巡检的结果：状态栏留一行汇总，非大屏状态下再弹一个不阻塞的明细框。"""
+        first_line = text.splitlines()[0] if text else ''
+        self.status.setText(first_line)
+        logger.info('巡检结果：%s', text.replace('\n', ' | '))
+        if self.managed.active or self.presentation or self.isFullScreen():
+            # 托管/大屏状态不弹窗，免得挡住画面；状态栏和日志里已经有了
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle('一键巡检')
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(text)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        # 非模态：不阻塞事件循环，也不挡住正在播的画面
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.open()
 
     def check_scheduled_restart(self):
         """每天固定时间重启一次：长期运行内存/句柄缓慢增长时的兜底，默认关闭。"""
