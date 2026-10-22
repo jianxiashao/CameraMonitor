@@ -123,9 +123,16 @@ git push -u origin main
 Windows 构建设成**只在手动运行时执行**，push 到 main 不会自动跑，
 不会消耗 Actions 额度，也不会在 Actions 里堆一串运行记录：
 
-| Workflow | 产物 | 运行环境 |
-| --- | --- | --- |
-| Build Windows x64 EXE | `CameraMonitor-Windows11-x64` | Python 3.12 + PySide6 / Qt 6 |
+| Workflow | 产物 | 运行环境 | 触发方式 |
+| --- | --- | --- | --- |
+| Build Windows x64 EXE | `CameraMonitor-Windows11-x64` | Python 3.12 + PySide6 / Qt 6 | 手动 Run workflow |
+| Publish desktop release | Windows + macOS 两个包 | 见第 7 节 | 推送 `v*` 标签 |
+| Live RTSP smoke test | 无（只做真流验证） | 需要 ffmpeg | 手动 Run workflow |
+
+> **Actions 里偶尔出现的「Dependabot Updates」不是构建。** 那是
+> `.github/dependabot.yml` 按**每月**一次检查依赖更新，发现新版本会开 PR，
+> 不消耗构建额度、不会打包 exe。PR 合并前建议手动跑一次构建确认仍然通过。
+> 不想看到它就把 `.github/dependabot.yml` 删掉。
 
 推送完成后，到 Actions 页面手动点 Run workflow，见第 5 节。
 `Publish desktop release`（macOS 打包 + 正式发布）只在推送 `v*` 标签时运行，见第 7 节。

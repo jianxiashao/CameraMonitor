@@ -1,10 +1,11 @@
-# 依赖每周检查一次安全更新；合并前先看打包流程是否仍然通过
+# 依赖每月检查一次安全更新；合并前先看打包流程是否仍然通过。
+# 频率刻意压低：构建 exe 只在手动运行 / 打 v* 标签时执行，依赖升级由人决定。
 version: 2
 updates:
   - package-ecosystem: pip
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
     labels: ['dependencies']
     commit-message:
@@ -12,7 +13,7 @@ updates:
   - package-ecosystem: pip
     directory: /packaging
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 3
     labels: ['dependencies']
     commit-message:
