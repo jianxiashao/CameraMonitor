@@ -1,5 +1,6 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -239,7 +240,11 @@ class ProgrammaticEntryTests(unittest.TestCase):
         self.window.settle_timer.setInterval(1)
         self.leave_while_the_fullscreen_animation_runs()
 
-        QTest.qWait(50)
+        # 1 毫秒的定时器在机器忙（比如整套测试同时在跑）时可能迟迟轮不到，
+        # 死等固定 50 毫秒会偶发失败；这里等到它真的有反应为止（最多 2 秒）
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and self.window.settling_state is not None:
+            QTest.qWait(20)
 
         self.assertIsNone(self.window.settling_state)
         # 落定期过了，再进全屏就按用户自己的演示模式处理
