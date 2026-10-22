@@ -1,6 +1,6 @@
 import unittest
 
-from camera_monitor.live_edge import CATCH_UP_GLIMPSE, LiveEdge
+from camera_monitor.live_edge import LiveEdge
 
 
 class LiveEdgeTests(unittest.TestCase):

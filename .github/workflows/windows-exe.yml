@@ -31,6 +31,11 @@ jobs:
             packaging/requirements-build.txt
       - name: Install dependencies
         run: python -m pip install -r requirements.txt -r packaging/requirements-build.txt
+      - name: Lint
+        # 只跑确定是错的规则（见 pyproject.toml）：未使用导入、语法级问题
+        run: |
+          python -m pip install --quiet ruff==0.17.1
+          ruff check camera_monitor tests packaging
       - name: Run regression tests
         env:
           QT_QPA_PLATFORM: offscreen

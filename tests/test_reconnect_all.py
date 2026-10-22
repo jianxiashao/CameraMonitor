@@ -6,7 +6,6 @@ import unittest
 from PySide6.QtWidgets import QApplication
 
 from camera_monitor import multiview
-from camera_monitor.discovery import Device
 from camera_monitor.multiview import MultiView
 from test_credentials import MemoryVault
 

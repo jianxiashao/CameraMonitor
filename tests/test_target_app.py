@@ -3,7 +3,6 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import unittest
 from unittest.mock import patch
 from PySide6.QtWidgets import QApplication
-from camera_monitor.app import Window
 from camera_monitor.discovery import Device
 from test_thumbnail_integration import IdleSearch
 from support import make_window

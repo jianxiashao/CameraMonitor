@@ -3,8 +3,7 @@ import time
 
 from PySide6.QtCore import Qt,QTimer,Signal,QEvent,QMimeData
 from PySide6.QtGui import QDrag
-from PySide6.QtWidgets import (QWidget,QDialog,QVBoxLayout,QHBoxLayout,QGridLayout,
-    QLabel,QPushButton,QFrame,QScrollArea,QApplication,QMenu,QLineEdit,QCheckBox)
+from PySide6.QtWidgets import (QWidget,QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QFrame,QScrollArea,QApplication,QMenu,QLineEdit,QCheckBox)
 from .choices import ChoiceButton
 from .playback import PlayerWindow
 from .credentials import CredentialStore

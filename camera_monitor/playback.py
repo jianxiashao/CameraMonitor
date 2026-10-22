@@ -8,7 +8,7 @@ from datetime import datetime
 import av
 from PySide6.QtCore import QThread, Signal, QTimer, Qt
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QCheckBox, QSpinBox, QSizePolicy, QPlainTextEdit, QApplication)
 from .credentials import CredentialStore, CredentialError
 from .device_names import DeviceNames
@@ -124,7 +124,9 @@ class Decoder(QThread):
                                 height = max(1, round(frame.height * width / frame.width))
                                 rgb = frame.reformat(width=width, height=height, format='rgb24')
                                 plane = rgb.planes[0]
-                                image = QImage(bytes(plane), width, height, plane.line_size, QImage.Format.Format_RGB888).copy()
+                                # PySide6 的 QImage 会自己持有这串 bytes，不用再 .copy()：
+                                # 1080p 一帧 6 MB，每帧就省下一次整帧拷贝
+                                image = QImage(bytes(plane), width, height, plane.line_size, QImage.Format.Format_RGB888)
                                 with self._lock: self._frame = image
                             frames += 1
                             if not session_received:

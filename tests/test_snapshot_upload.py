@@ -1,7 +1,7 @@
 import unittest
 
 from camera_monitor.cloud import CloudClient, CloudError
-from test_cloud import FakeResponse, FakeSession, fail, ok
+from test_cloud import FakeSession, fail, ok
 
 
 class SnapshotUploadTests(unittest.TestCase):

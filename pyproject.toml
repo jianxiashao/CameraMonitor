@@ -1,0 +1,43 @@
+[project]
+name = 'camera-monitor'
+description = '内网 RTSP 摄像头监控墙：自动发现设备、多路实时画面、云端托管'
+requires-python = '>=3.12'
+dynamic = ['version']
+
+[tool.ruff]
+line-length = 200
+target-version = 'py312'
+extend-exclude = ['dist', 'build', 'packaging/win7']
+
+[tool.ruff.lint]
+# 先只开"确定是错"的规则；风格类不碰——这个项目大量使用 `if x:return` 的紧凑写法
+select = ['E', 'F', 'W']
+ignore = [
+    'E701',  # 一行多条语句（项目既有风格）
+    'E702',  # 分号分隔（同上）
+    'E401',  # 一行多个 import（测试里常见）
+    'E402',  # 模块级 import 不在顶部（choices 的别名导入、测试里的环境变量设置需要）
+    'E501',  # 行太长（注释里常有实测数据）
+    'E731',  # 把 lambda 赋给变量（测试里构造桩函数用）
+    'W291',  # 行尾空白
+    'W293',
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试里大量使用 `from support import ...`（tests 目录在 sys.path 上）
+'tests/*' = ['F811']
+
+[tool.mypy]
+python_version = '3.12'
+ignore_missing_imports = true
+warn_unused_ignores = false
+# 只对纯逻辑模块开启严格检查；Qt 界面代码交给运行时测试
+files = [
+    'camera_monitor/cloud_state.py',
+    'camera_monitor/live_edge.py',
+    'camera_monitor/wall_layout.py',
+    'camera_monitor/discovery.py',
+    'camera_monitor/streams.py',
+    'camera_monitor/single_instance.py',
+    'camera_monitor/crash_guard.py',
+]

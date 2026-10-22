@@ -27,7 +27,7 @@ class ReentrantLoginTest(unittest.TestCase):
         self.panel.login_requested.connect(self.codes.append)
 
     def install_dialog(self, during_exec, result=QDialog.DialogCode.Accepted, code='YG1F-2026'):
-        opened, panel = self.opened, self.panel
+        opened = self.opened
 
         class FakeDialog:
             def __init__(self, parent=None):

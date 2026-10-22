@@ -27,7 +27,8 @@ def first_frame(url, cancel, transport='tcp'):
             height = max(1, round(frame.height * width / frame.width))
             rgb = frame.reformat(width=width, height=height, format='rgb24')
             plane = rgb.planes[0]
-            return QImage(bytes(plane), width, height, plane.line_size, QImage.Format.Format_RGB888).copy()
+            # 同 playback：QImage 自己持有这串 bytes，不必再 .copy() 一份
+            return QImage(bytes(plane), width, height, plane.line_size, QImage.Format.Format_RGB888)
     return None
 
 

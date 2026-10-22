@@ -4,12 +4,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
 from camera_monitor import cloud_state
-from camera_monitor.app import Window
-from camera_monitor.device_names import DeviceNames
 from camera_monitor.discovery import Device
 from support import make_window
 from test_credentials import MemoryVault

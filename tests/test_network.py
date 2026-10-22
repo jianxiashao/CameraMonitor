@@ -2,7 +2,6 @@ import socket
 import threading
 import unittest
 from camera_monitor.discovery import Interface, scan
-from test_discovery import ONVIF
 
 class NetworkTests(unittest.TestCase):
     def test_real_udp_response_is_collected_and_duplicate_merged(self):

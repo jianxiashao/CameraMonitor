@@ -8,6 +8,7 @@ commitDataRequest。所以只要在 commitDataRequest 里放行，两个平台�
 """
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -16,6 +17,7 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication
 
 from camera_monitor import app as app_module
+from camera_monitor import bootstrap as bootstrap_module
 
 from support import make_window
 from test_credentials import MemoryVault
@@ -119,9 +121,10 @@ class MainWiringTests(unittest.TestCase):
 
         created = []
         windows = []
-        with patch.object(app_module, 'QApplication', FakeQApplication), \
+        # main() 现在住在 bootstrap.py：QApplication 要在那边替换，Window 仍从 app 取
+        with patch.object(bootstrap_module, 'QApplication', FakeQApplication), \
                 patch.object(app_module, 'Window', lambda: windows.append(FakeWindow()) or windows[-1]), \
-                patch.object(app_module.sys, 'exit'):
+                patch.object(sys, 'exit'):
             app_module.main()
 
         created[0].commitDataRequest.emit(None)

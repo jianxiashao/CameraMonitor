@@ -16,7 +16,7 @@ class FakeRegistry:
     """只实现 autostart 用到的那几个 winreg 接口，按键路径分开存。
 
     和真 winreg 一样：打开不存在的键、读删不存在的值都抛 FileNotFoundError。
-    Run 键一开始就在（正常系统上都有），StartupApproved\Run 要任务管理器动过才有。
+    Run 键一开始就在（正常系统上都有），StartupApproved\\Run 要任务管理器动过才有。
     """
     HKEY_CURRENT_USER = 'HKCU'
     KEY_READ = 1

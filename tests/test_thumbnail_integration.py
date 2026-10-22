@@ -4,7 +4,7 @@ import tempfile
 import threading
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 from PySide6.QtCore import QObject, Signal, QSettings
 from PySide6.QtGui import QImage, QCloseEvent
 from PySide6.QtWidgets import QApplication

@@ -21,6 +21,8 @@ a = Analysis(
     binaries=[], datas=metadata+[(str(root/"camera_monitor"/"assets"/"app-icon.png"),"camera_monitor/assets")],
     hiddenimports=['keyring.backends.Windows', 'win32ctypes.pywin32.win32cred', 'PySide6.QtWebSockets'],
     hookspath=[], hooksconfig={}, runtime_hooks=[],
+    # 实测：再往下排 Qt 模块体积不会变（PyInstaller 只收集被导入的模块），
+    # 所以只保留这几项确实装不进包的东西，别为"看着整齐"扩大这张表。
     excludes=['tkinter', 'keyring.backends.macOS', 'PySide6.QtWebEngineCore',
               'PySide6.QtWebEngineWidgets', 'PySide6.QtQml', 'PySide6.QtQuick'],
     noarchive=False, optimize=0,

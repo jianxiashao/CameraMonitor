@@ -4,22 +4,21 @@ from .choices import ChoiceButton as QComboBox
 import json
 import logging
 import logging.handlers
-import os
 import platform
-import sys
 import threading
 import time
-from PySide6.QtCore import QCoreApplication, QThread, Signal, Qt, QTimer, QEvent, QSettings, QStandardPaths
+from PySide6.QtCore import QCoreApplication, QThread, Signal, Qt, QTimer, QEvent, QSettings
 from PySide6.QtGui import QShortcut, QKeySequence, QIcon
 from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QBoxLayout, QInputDialog, QCheckBox,
-    QAbstractItemView, QPlainTextEdit, QProgressBar, QSplitter, QFrame, QScrollArea, QStackedWidget, QSizePolicy,
-    QMessageBox)
+    QPlainTextEdit, QProgressBar, QSplitter, QFrame, QScrollArea, QStackedWidget, QSizePolicy)
 from . import __version__
-from . import crash_guard, single_instance
+from .bootstrap import main
+# 启动相关的函数住在 bootstrap.py，这里保留同名导入，旧的 `camera_monitor.app.setup_logging`
+# 之类引用（测试与打包入口）继续可用
+from .bootstrap import allow_session_quit, log_startup, setup_logging  # noqa: F401
 from .discovery import Device, interfaces, scan, validate_target_ip
-from .playback import PlayerWindow
 from .device_list import DeviceList
 from .multiview import MultiView
 from .screen_lock import ScreenLock,request_unlock,PasswordSettingsDialog
@@ -39,9 +38,6 @@ from .snapshots import SnapshotUploader
 from . import win_topmost
 
 logger=logging.getLogger(__name__)
-LOG_FILE='camera_monitor.log'
-LOG_MAX_BYTES=1024*1024
-LOG_BACKUPS=3
 # 完整模式「启动后自动全屏」；它和 monitor/autostart 一样跟着 layout 同步到云端
 START_FULLSCREEN_KEY='monitor/start_fullscreen'
 # 不登录云端的电脑存的本机快照，格式同云端配置（剥掉密码）。local/ 不算启动分流里的「用过」
@@ -1155,58 +1151,6 @@ class Window(QMainWindow):
         self.session_credentials.clear()
         if self.batch_panel:self.batch_panel.password.clear()
         event.accept()
-
-
-def allow_session_quit(app,window):
-    # 关机、注销时系统要求所有程序退出；傻瓜模式平时拦着关闭，这时必须放行。
-    # Qt 6.8 在 Windows 上收到 WM_QUERYENDSESSION，在 macOS 上走 applicationShouldTerminate
-    # （⌘Q、程序坞「退出」、注销、关机都走这里），都是先发 commitDataRequest、再关所有窗口。
-    # 所以 macOS 上分不清注销和 ⌘Q，一律放行：现场电脑都是 Windows，macOS 只是开发机
-    app.commitDataRequest.connect(lambda manager:setattr(window,'authorized_quit',True))
-
-def setup_logging(directory):
-    """现场电脑出了问题只能靠日志：写到文件里，满 1 MB 轮换，留 3 份旧的。
-
-    目录建不出来、文件打不开时不写文件，软件照常运行——日志不能反过来让监控起不来。
-    返回装上的处理器，没装上返回 None。
-    """
-    try:
-        os.makedirs(directory,exist_ok=True)
-        handler=logging.handlers.RotatingFileHandler(os.path.join(directory,LOG_FILE),
-            maxBytes=LOG_MAX_BYTES,backupCount=LOG_BACKUPS,encoding='utf-8')
-    except OSError:
-        return None
-    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
-    root=logging.getLogger()
-    root.addHandler(handler)
-    root.setLevel(logging.INFO)
-    return handler
-
-def log_startup(argv):
-    # 记下是开机自启还是人手打开的：现场说「开机没起来」时先看这一行
-    logger.info('Camera Monitor %s 启动%s',__version__,'（开机自启）' if AUTOSTART_FLAG in argv else '')
-
-def main():
-    app = QApplication(sys.argv)
-    app.setApplicationName('Camera Monitor')
-    # 要在设好程序名之后取目录，否则会落到没有程序名的公共目录里。
-    # 取不到目录时返回空串，拼出来就成了当前目录下的 logs，宁可不写
-    data=QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
-    if data:setup_logging(os.path.join(data,'logs'))
-    log_startup(sys.argv)
-    # 崩溃现场也写进这个目录：打包后没有控制台，闪退只能靠它查
-    crash_guard.install(os.path.join(data, 'logs') if data else '')
-    # 第二个实例直接退出：两套解码线程会把同一批相机挤掉，还会同时写设置和快照
-    instance = single_instance.acquire()
-    if instance is None:
-        QMessageBox.information(None, 'Camera Monitor', '程序已经在运行，请切换到已打开的窗口。')
-        return
-    app.setWindowIcon(QIcon(str(Path(__file__).parent/'assets'/'app-icon.png')))
-    app.setStyle('Fusion')
-    window = Window()
-    allow_session_quit(app,window)
-    window.show()
-    sys.exit(app.exec())
 
 
 if __name__ == '__main__':

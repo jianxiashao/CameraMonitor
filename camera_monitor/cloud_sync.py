@@ -12,7 +12,7 @@ import uuid
 from PySide6.QtCore import QObject, QSettings, QThread, QTimer, Signal
 
 from . import __version__, cloud_state
-from .cloud import (READ_TIMEOUT, CloudAuthError, CloudClient, CloudConflict,
+from .cloud import (READ_TIMEOUT, CloudClient, CloudConflict,
                     CloudError)
 from .credentials import CloudSessionStore, CredentialError
 
