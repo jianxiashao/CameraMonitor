@@ -217,9 +217,56 @@ Release 的说明文字取自 `packaging/RELEASE.md`，发版前记得更新它�
 
 ## 8. 常见问题
 
+### 推送认证与代理排查
+
+**认证失败**：GitHub 的 HTTPS 地址默认不带用户名，本机如果存过多套凭据，Git 可能取不到正确的一条。先设置当前账号：
+
+```powershell
+git config --global credential.username 你的GitHub用户名
+git push -u origin main
+```
+
+仍然 401 时，清除旧凭据后重新登录：
+
+```powershell
+"protocol=https`nhost=github.com`n" | git credential-manager erase
+git push -u origin main
+```
+
+也可以把用户名写进远程地址：
+
+```powershell
+git remote set-url origin https://你的GitHub用户名@github.com/你的GitHub用户名/CameraMonitor.git
+```
+
+**连接被重置**：如果浏览器能开 GitHub，但 `git push` 报 `Recv failure: Connection was reset`，通常是代理/防火墙。先确认代理端口可用，再显式告诉 Git：
+
+```powershell
+# 端口换成你实际代理的端口（例如 Clash 常见 7890 / 7897）
+git config --global http.proxy http://127.0.0.1:7897
+git config --global https.proxy http://127.0.0.1:7897
+git config --global http.version HTTP/1.1
+git push -u origin main
+```
+
+如果仍然重置，切换代理节点/模式，或改用 SSH：
+
+```powershell
+# 先把本机公钥加到 GitHub → Settings → SSH and GPG keys
+ssh -T git@github.com
+git remote set-url origin git@github.com:你的GitHub用户名/CameraMonitor.git
+git push -u origin main
+```
+
+> 代理不再使用时可以清掉：`git config --global --unset http.proxy`、`git config --global --unset https.proxy`。
+
+
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
 | `remote: Repository not found` | 仓库地址错 / 无权限 / 认证未通过 | 核对用户名与仓库名；重新 `git remote set-url origin <地址>`；确认 token 有 `repo` 权限 |
+| `Recv failure: Connection was reset` | 代理/网络在推送时重置连接 | 先用 `git ls-remote origin` 确认能连上；在 Git 里显式设置 `http.proxy` / `https.proxy`，或切换代理节点/关闭 TUN 后重试；HTTPS 一直不稳定时改用 SSH |
+| `Authentication failed` / 401 | Git 没找到对应账号的凭据，或 token 失效 | `git config --global credential.username 你的GitHub用户名`；必要时清除旧凭据（见上方「推送认证与代理排查」），重新登录或改用 Personal Access Token |
+| `git push` 报错但本地已有提交 | 提交成功，只是推送失败 | `git log -1 --oneline` 确认；修复网络/认证后直接重跑 `git push -u origin main`，不要重复提交 |
 | `rejected ... fetch first` | 建仓库时勾了 README / .gitignore / license | `git pull --rebase origin main` 后重新 `git push`；或删掉远程仓库重建（保持空仓库） |
 | `fatal: remote origin already exists` | 已经关联过远程 | `git remote set-url origin <新地址>` |
 | Actions 页面看不到 “Build Windows x64 EXE” | workflow 不在默认分支；或 Actions 被禁用 | 确认仓库默认分支是 `main`（Settings → Branches）；Settings → Actions → General 选 **Allow all actions and reusable workflows** |

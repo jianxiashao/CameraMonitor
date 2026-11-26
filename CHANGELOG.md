@@ -26,7 +26,7 @@
 - **云端配置容错**：`capacity` 为 null、`cameras` 不是对象数组时不再让整次同步失败。
 - **手动 RTSP 地址脱敏**：URL 里的 `user:pass@` 在写入云端/本机快照和诊断包前会被剥掉；配置指纹改为 SHA-256。
 - **Windows 一键启动更稳**：`start-windows.bat` 支持 `py -3.12/3.13` 和 PATH 里的 `python`，优先复用 `.venv`/`.venv-win`，依赖已装时不再联网跑 pip；失败时直接打印日志路径、返回码和手动命令。
-- **修复上传脚本**：`upload-to-github.ps1` 改用 `$args` 转发 git 参数，解决 `git add -A` 被 PowerShell 当成 `-Arguments` 缩写而报 “Missing an argument” 的问题。
+- **修复上传脚本**：`upload-to-github.ps1` 改用 `$args` 转发 git 参数，解决 `git add -A` 被 PowerShell 当成 `-Arguments` 缩写而报 “Missing an argument” 的问题；上传说明补充 GitHub 认证与代理排查。
 
 ### 性能
 

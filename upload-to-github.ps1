@@ -258,10 +258,10 @@ if ($code -ne 0) {
         Fail '找不到这个仓库。' '核对仓库地址里的用户名和仓库名，确认仓库已经建好、token 有 repo 权限。'
     }
     if ($text -match 'Authentication failed|could not read Username|terminal prompts disabled|Permission denied|403') {
-        Fail '认证没有通过。' '重新运行一次，在弹出窗口里登录；或者用 Personal Access Token 代替密码。'
+        Fail '认证没有通过。' '先执行 git config --global credential.username 你的GitHub用户名；仍失败就用 Personal Access Token 代替密码，或清除旧凭据后重新登录。'
     }
     if ($text -match 'Could not resolve host|unable to access|Failed to connect') {
-        Fail '连不上 GitHub。' '检查网络、代理或防火墙设置。'
+        Fail '连不上 GitHub。' '检查网络、代理或防火墙；Git 走 HTTPS 时可设置 git config --global http.proxy，HTTPS 不稳定时可改用 SSH。'
     }
     Fail '推送失败。' '看一下上面的 git 报错。'
 }
