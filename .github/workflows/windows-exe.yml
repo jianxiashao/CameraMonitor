@@ -63,7 +63,7 @@ jobs:
           "$hash  CameraMonitor.exe" | Set-Content dist-win/SHA256SUMS.txt -Encoding utf8
           "Commit: $env:GITHUB_SHA`nBuild: $env:GITHUB_RUN_NUMBER`nTarget: Windows 11 x64`nCamera network acceptance: pending" | Set-Content dist-win/BUILD.txt -Encoding utf8
       - name: Upload EXE and instructions
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: CameraMonitor-Windows11-x64
           path: dist-win/*
