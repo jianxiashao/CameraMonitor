@@ -7,7 +7,8 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot, Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
 from .credentials import CredentialStore, CredentialError
-from .streams import OnvifClient, AuthError, authenticated_url, same_device_url, dahua_streams
+from .streams import (OnvifClient, AuthError, authenticated_url, same_device_url,
+                      dahua_streams, hikvision_rtsp_url)
 
 av.logging.set_level(av.logging.PANIC)
 
@@ -23,7 +24,8 @@ def first_frame(url, cancel, transport='tcp'):
         video.codec_context.thread_count = 1
         for frame in source.decode(video):
             if cancel.is_set(): return None
-            width = min(frame.width, 1280)
+            # 列表里只显示 80px 宽的缩略图；解码到 1280 是浪费。放大预览够用即可。
+            width = min(frame.width, 640)
             height = max(1, round(frame.height * width / frame.width))
             rgb = frame.reformat(width=width, height=height, format='rgb24')
             plane = rgb.planes[0]
@@ -142,7 +144,15 @@ class ThumbnailController(QObject):
             return
         self.sequence += 1
         self.tokens[device.ip] = self.sequence
-        options = {'mode': 'dahua' if '大华 DHIP' in device.protocols else 'onvif', 'transport': 'tcp'}
+        if '大华 DHIP' in device.protocols:
+            options = {'mode': 'dahua', 'transport': 'tcp'}
+        elif getattr(device, 'rtsp_url', ''):
+            options = {'mode': 'manual', 'url': device.rtsp_url, 'transport': 'tcp'}
+        elif '海康 SADP' in device.protocols:
+            # SADP 只负责找到设备；取流直接走海康常用 RTSP 地址，不依赖 ONVIF 开关
+            options = {'mode': 'manual', 'url': hikvision_rtsp_url(device.ip), 'transport': 'tcp'}
+        else:
+            options = {'mode': 'onvif', 'transport': 'tcp'}
         if self.connection_options: options['transport'] = self.connection_options.transport(device.ip)
         if self.connection: options.update(self.connection(device) or {})
         # 最近解析过 ONVIF 地址就直接用，不再问相机一遍

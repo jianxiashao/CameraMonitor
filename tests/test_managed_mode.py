@@ -49,7 +49,7 @@ class FakeAutoStart:
     def __init__(self):
         self.enabled = False
 
-    def enable(self):
+    def enable(self, watchdog=False):
         self.enabled = True
         return True
 

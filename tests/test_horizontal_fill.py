@@ -32,8 +32,10 @@ class HorizontalFillTests(unittest.TestCase):
             before=[p.geometry() for p in wall.placeholders]
             self.assertFalse(wall.fill_width.isChecked())
             wall.fill_width.click()
-            self.assertEqual(min(p.x() for p in wall.placeholders),0)
-            self.assertEqual(max(p.x()+p.width() for p in wall.placeholders),wall.canvas.width())
+            # 新界面给格子留了间距；关键是左右不再有整块留白
+            self.assertLessEqual(min(p.x() for p in wall.placeholders),12)
+            self.assertGreaterEqual(max(p.x()+p.width() for p in wall.placeholders),
+                                    wall.canvas.width()-12)
             wall.fill_width.click()
             self.assertEqual([p.geometry() for p in wall.placeholders],before)
             wall.fill_width.click();wall.close()

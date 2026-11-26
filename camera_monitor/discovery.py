@@ -32,6 +32,9 @@ class Device:
     protocols: list[str] = field(default_factory=list)
     urls: list[str] = field(default_factory=list)
     interface: str = ''
+    serial: str = ''
+    # 手动添加的 RTSP 摄像头：没有发现协议，地址由用户填写
+    rtsp_url: str = ''
 
 
 def interfaces() -> list[Interface]:
@@ -64,6 +67,13 @@ def onvif_probe() -> bytes:
 def dahua_probe() -> bytes:
     body = json.dumps({'method': 'DHDiscover.search', 'params': {'mac': '', 'uni': 1}}, separators=(',', ':')).encode()
     return struct.pack('<I4s6I', 32, b'DHIP', 0, 0, len(body), 0, len(body), 0) + body
+
+
+def hikvision_probe() -> bytes:
+    """海康 SADP：239.255.255.250:37020 上的 XML 探测包。"""
+    return (f'<?xml version="1.0" encoding="utf-8"?>'
+            f'<Probe><Uuid>{str(uuid.uuid4()).upper()}</Uuid>'
+            f'<Types>inquiry</Types></Probe>').encode()
 
 
 def _text(element, local_name):
@@ -128,12 +138,50 @@ def parse_dahua(data: bytes, source: str) -> list[Device]:
         return []
 
 
+def parse_hikvision(data: bytes, source: str) -> list[Device]:
+    """解析海康 SADP 的 <ProbeMatch>；只读发现信息，不做任何登录/配置写入。"""
+    if len(data) > 65535:
+        return []
+    try:
+        root = ET.fromstring(data.rstrip(b'\x00\r\n'))
+    except Exception:
+        return []
+    result = []
+    for match in root.iter():
+        if match.tag.rsplit('}', 1)[-1] != 'ProbeMatch':
+            continue
+        def value(name):
+            text = _text(match, name)
+            return text[:256] if text else ''
+        model = value('DeviceDescription') or value('DeviceType')
+        serial = value('DeviceSN')
+        reported = value('IPv4Address')
+        try:
+            ip = str(ipaddress.IPv4Address(reported)) if reported else source
+        except ipaddress.AddressValueError:
+            ip = source
+        if ip in ('0.0.0.0', ''):
+            ip = source
+        try:
+            http_port = int(value('HttpPort') or 0)
+        except ValueError:
+            http_port = 0
+        urls = []
+        if http_port and ip:
+            # 海康的 ONVIF 服务通常也在这个 HTTP 端口上；能自动认出地址就先填好
+            urls.append(f'http://{ip}:{http_port}/onvif/device_service')
+        # 序列号只用于排障展示；不覆盖用户自定义名称
+        result.append(Device(ip, name=model, model=model, manufacturer='海康威视',
+                             protocols=['海康 SADP'], urls=urls, serial=serial))
+    return result
+
+
 def merge_device(records: dict[str, Device], incoming: Device) -> Device:
     if incoming.ip not in records:
         records[incoming.ip] = replace(incoming, protocols=list(incoming.protocols), urls=list(incoming.urls))
     else:
         existing = records[incoming.ip]
-        for key in ('name', 'model', 'manufacturer', 'interface'):
+        for key in ('name', 'model', 'manufacturer', 'interface', 'serial', 'rtsp_url'):
             if not getattr(existing, key):
                 setattr(existing, key, getattr(incoming, key))
         existing.protocols = list(dict.fromkeys(existing.protocols + incoming.protocols))
@@ -162,7 +210,8 @@ def quiet_enough(last_response, now, quiet_period):
 
 def scan(networks: list[Interface], on_device=lambda device: None, on_status=lambda text: None,
          cancel: threading.Event | None = None, duration: float = 8.0, target_ip: str | None = None,
-         quiet_period: float = 2.5) -> list[Device]:
+         quiet_period: float = 2.5, onvif_port: int = 3702,
+         dahua_port: int = 37810, sadp_port: int = 37020) -> list[Device]:
     if target_ip is not None:
         target_ip = validate_target_ip(target_ip)
     cancel = cancel or threading.Event()
@@ -172,8 +221,9 @@ def scan(networks: list[Interface], on_device=lambda device: None, on_status=lam
     try:
         for network in networks:
             for protocol, port, group, packet, parser in (
-                ('ONVIF', 3702, '239.255.255.250', onvif_probe(), parse_onvif),
-                ('大华 DHIP', 37810, '239.255.255.251', dahua_probe(), parse_dahua),
+                ('ONVIF', onvif_port, '239.255.255.250', onvif_probe(), parse_onvif),
+                ('大华 DHIP', dahua_port, '239.255.255.251', dahua_probe(), parse_dahua),
+                ('海康 SADP', sadp_port, '239.255.255.250', hikvision_probe(), parse_hikvision),
             ):
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 try:
@@ -184,7 +234,8 @@ def scan(networks: list[Interface], on_device=lambda device: None, on_status=lam
                     sock.setblocking(False)
                     # A dedicated socket on each interface ensures responses return to that NIC.
                     destinations = [(target_ip or group, port)]
-                    if target_ip is None and protocol == '大华 DHIP':
+                    # 大华和海康都吃广播；某些交换机不放行组播时靠这条
+                    if target_ip is None and protocol in ('大华 DHIP', '海康 SADP'):
                         destinations += [(network.broadcast, port)]
                     channel = (sock, network, protocol, packet, destinations, parser)
                     selector.register(sock, selectors.EVENT_READ, channel)

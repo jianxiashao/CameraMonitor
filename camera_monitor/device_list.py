@@ -41,27 +41,28 @@ class Cell:
 class DeviceRow(QPushButton):
     activated = Signal()
     thumbnailClicked = Signal()
+    menuRequested = Signal(object)
 
     def __init__(self, compact=False):
         super().__init__()
         self.setObjectName('deviceRow')
         self.setCheckable(True)
-        if compact: self.setFixedHeight(78)
-        else: self.setMinimumHeight(80)
+        if compact: self.setFixedHeight(86)
+        else: self.setMinimumHeight(84)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setAccessibleDescription('点击选择摄像头，双击或按回车播放视频')
         # 行背景、分隔线、选中态、缩略图底色都在 theme.py 里：
         # 写在这里会盖掉主题，深色模式下这一列会突兀地亮着
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6 if compact else 10, 5, 6 if compact else 10, 5)
-        layout.setSpacing(7 if compact else 4)
+        layout.setContentsMargins(8 if compact else 10, 7, 8 if compact else 10, 7)
+        layout.setSpacing(10 if compact else 8)
         self.thumbnail_image = None
         self.thumbnail = QPushButton('待获取画面')
         self.thumbnail.setObjectName('deviceThumbnail')
-        self.thumbnail.setFixedSize(80 if compact else 112, 45 if compact else 64)
+        self.thumbnail.setFixedSize(88 if compact else 112, 50 if compact else 64)
         # 图标铺满按钮：有图和没图两种状态看起来一样大
-        self.thumbnail.setIconSize(QSize(80 if compact else 112, 45 if compact else 64))
+        self.thumbnail.setIconSize(QSize(88 if compact else 112, 50 if compact else 64))
         self.thumbnail.setAccessibleName('设备缩略图，点击查看大图')
         self.thumbnail.setEnabled(False)
         self.thumbnail.clicked.connect(self.thumbnailClicked.emit)
@@ -80,12 +81,14 @@ class DeviceRow(QPushButton):
             if not compact: layout.addWidget(label,1)
             self.cells.append(Cell(label,self))
         if compact:
+            text_layout.setSpacing(2)
             for index in (1, 0, 4): text_layout.addWidget(self.cells[index].label)
             self.cells[2].label.hide()
             self.cells[3].label.hide()
-            self.cells[1].label.setStyleSheet("font-weight:600; font-size:12px;")
+            self.cells[1].label.setStyleSheet("font-weight:600; font-size:13px;")
+            self.cells[0].label.setObjectName('muted')
             self.cells[0].label.setStyleSheet("font-size:11px;")
-            self.cells[4].label.setObjectName('muted')
+            self.cells[4].label.setObjectName('deviceStatus')
             self.cells[4].label.setStyleSheet("font-size:11px;")
 
     def set_thumbnail(self, image, status):
@@ -99,6 +102,10 @@ class DeviceRow(QPushButton):
         else:
             self.thumbnail.setIcon(QIcon())
             self.thumbnail.setText('需登录' if '密码' in status else ('获取中…' if '获取' in status else '暂无预览'))
+
+    def contextMenuEvent(self,event):
+        self.menuRequested.emit(event.globalPos())
+        event.accept()
 
     def mouseDoubleClickEvent(self,event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -118,6 +125,7 @@ class DeviceList(QWidget):
     itemSelectionChanged=Signal()
     cellDoubleClicked=Signal(int,int)
     thumbnailClicked=Signal(int)
+    rowMenuRequested=Signal(int,object)
 
     def __init__(self, compact=False):
         super().__init__()
@@ -127,7 +135,7 @@ class DeviceList(QWidget):
         layout=QVBoxLayout(self)
         layout.setContentsMargins(0,0,0,0)
         header=QWidget()
-        header.setStyleSheet('background:#eaf0f7; border-radius:6px; font-weight:600;')
+        header.setObjectName('deviceListHeader')
         labels=QHBoxLayout(header)
         labels.setContentsMargins(10,10,10,10)
         thumb_header = QLabel('画面')
@@ -141,8 +149,8 @@ class DeviceList(QWidget):
         self.scroll.setWidgetResizable(True)
         self.content=QWidget()
         self.body=QVBoxLayout(self.content)
-        self.body.setContentsMargins(0,0,0,0)
-        self.body.setSpacing(0)
+        self.body.setContentsMargins(2,4,2,4)
+        self.body.setSpacing(8)
         self.body.addStretch()
         self.scroll.setWidget(self.content)
         layout.addWidget(self.scroll)
@@ -157,6 +165,7 @@ class DeviceList(QWidget):
         row.clicked.connect(lambda checked: self.selectRow(self.rows.index(row)))
         row.thumbnailClicked.connect(lambda: self.thumbnailClicked.emit(self.rows.index(row)))
         row.activated.connect(lambda: self.cellDoubleClicked.emit(self.rows.index(row),0))
+        row.menuRequested.connect(lambda pos: self.rowMenuRequested.emit(self.rows.index(row),pos))
 
     def selectRow(self,index):
         if not 0 <= index < len(self.rows): return

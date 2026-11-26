@@ -5,6 +5,7 @@ Kept free of widgets so the mapping can be tested on its own; the orchestration
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 
@@ -12,6 +13,7 @@ from .connection_options import ConnectionOptions
 from .credentials import CredentialError
 from .device_names import DeviceNames
 from .discovery import Device
+from .streams import strip_url_credentials
 
 # 与 playback.PlayerWindow 的取流下拉顺序一致
 STREAM_MODES = ('onvif', 'dahua', 'manual')
@@ -25,7 +27,9 @@ DEFAULT_CREDENTIAL_ACCOUNT = '__default__'
 
 
 def profile_mode(snapshot) -> str:
-    mode = str((snapshot or {}).get('mode') or 'full')
+    if not isinstance(snapshot, dict):
+        return 'full'
+    mode = str(snapshot.get('mode') or 'full')
     return mode if mode in MODES else 'full'
 
 
@@ -65,7 +69,8 @@ def camera_entry(device, *, slot_index, display_name='', name_color='#ffffff',
         'onvif_urls': list(device.urls or []),
         'stream_mode': stream_mode,
         'dahua_channel': int(dahua_channel or 1),
-        'manual_url': manual_url or '',
+        # 用户可能把 rtsp://user:pass@... 整段粘进来；配置里只留地址，凭据走单独字段
+        'manual_url': strip_url_credentials(manual_url or ''),
         'transport': transport or 'tcp',
         'username': username or '',
         'name_color': name_color,
@@ -84,6 +89,7 @@ def device_from_camera(camera) -> Device:
         manufacturer=str(camera.get('manufacturer') or ''),
         protocols=list(camera.get('protocols') or []),
         urls=list(camera.get('onvif_urls') or []),
+        rtsp_url=str(camera.get('manual_url') or ''),
     )
 
 
@@ -121,8 +127,12 @@ def layout_entry(capacity, columns, fill_width, organization,
             continue
         if key in EQUAL_CAPACITIES and 1 <= value <= key:
             normalised[str(key)] = value
+    try:
+        capacity = int(capacity)
+    except (TypeError, ValueError):
+        capacity = 4
     layout = {
-        'capacity': int(capacity) if int(capacity) in CAPACITIES else 4,
+        'capacity': capacity if capacity in CAPACITIES else 4,
         'columns': normalised,
         'fill_width': bool(fill_width),
         'organization': (organization or '')[:80],
@@ -141,7 +151,12 @@ def cacheable(snapshot) -> dict:
     """
     cameras = []
     for camera in snapshot.get('cameras') or []:
-        cameras.append({key: value for key, value in camera.items() if key != 'password'})
+        if not isinstance(camera, dict):
+            continue
+        entry = {key: value for key, value in camera.items() if key != 'password'}
+        if 'manual_url' in entry:
+            entry['manual_url'] = strip_url_credentials(entry.get('manual_url') or '')
+        cameras.append(entry)
     defaults = snapshot.get('default_credentials')
     return {
         'version': snapshot.get('version', 0),
@@ -210,8 +225,13 @@ def apply_snapshot(snapshot, names: DeviceNames, options: ConnectionOptions, sto
     单台摄像头写钥匙串失败（系统安全存储不可用）不应该让整次同步作废，
     失败的 IP 会记在 credential_failures 里交给调用方提示。
     """
-    cameras = list(snapshot.get('cameras') or [])
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    raw_cameras = snapshot.get('cameras') or []
+    cameras = [camera for camera in raw_cameras if isinstance(camera, dict)] if isinstance(raw_cameras, list) else []
     raw_layout = snapshot.get('layout') or {}
+    if not isinstance(raw_layout, dict):
+        raw_layout = {}
     layout = layout_entry(
         raw_layout.get('capacity', 4),
         raw_layout.get('columns', {}),
@@ -315,7 +335,18 @@ def config_fingerprint(layout, cameras) -> str:
     只看内容，不看键的顺序、摄像头的排列先后。用来判断这次要传的东西和上次
     传上去的是不是一模一样——一样就没必要再传，服务端每收一次都会把版本号加一。
     """
-    ordered = sorted((dict(camera) for camera in cameras or []),
-                     key=lambda camera: (str(camera.get('ip', '')), int(camera.get('slot_index', 0) or 0)))
-    return json.dumps({'layout': dict(layout or {}), 'cameras': ordered},
-                      ensure_ascii=False, sort_keys=True)
+    ordered = []
+    for camera in cameras or []:
+        if not isinstance(camera, dict):
+            continue
+        try:
+            slot = int(camera.get('slot_index', 0) or 0)
+        except (TypeError, ValueError):
+            slot = 0
+        ordered.append((str(camera.get('ip', '')), slot, camera))
+    ordered.sort(key=lambda item: (item[0], item[1]))
+    # 指纹里带着密码。它只在进程内比较，但没理由把明文留在内存和调用栈上
+    raw = json.dumps({'layout': dict(layout or {}) if isinstance(layout, dict) else {},
+                      'cameras': [camera for _, _, camera in ordered]},
+                     ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()

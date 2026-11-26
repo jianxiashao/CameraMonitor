@@ -9,7 +9,25 @@ Without isolation a Window() also picks up a real cloud session and starts
 talking to the server mid-test.
 """
 import os
+import socket
 import tempfile
+
+
+def loopback_udp_available():
+    """有些 Windows 环境（防火墙/沙箱）连 127.0.0.1 的 UDP 都不通。"""
+    server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        server.bind(('127.0.0.1', 0))
+        server.settimeout(0.3)
+        client.sendto(b'probe', server.getsockname())
+        server.recvfrom(16)
+        return True
+    except (OSError, TimeoutError):
+        return False
+    finally:
+        server.close()
+        client.close()
 
 # 环形录像在测试里没有意义：每秒给有画面的格子编码 mp4 会拖慢整套用例
 os.environ.setdefault('CAMERA_MONITOR_NO_RECORDING', '1')
@@ -41,7 +59,7 @@ class FakeAutoStart:
         self.last_error = ''
         self.calls = []
 
-    def enable(self):
+    def enable(self, watchdog=False):
         self.calls.append('enable')
         if not self.works:
             self.last_error = self.error
@@ -54,7 +72,7 @@ class FakeAutoStart:
         self.enabled = False
         return True
 
-    def is_enabled(self):
+    def is_enabled(self, watchdog=False):
         return self.enabled
 
 

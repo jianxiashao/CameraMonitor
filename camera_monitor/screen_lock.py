@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import secrets
 
-from PySide6.QtCore import QSettings, Slot
+from PySide6.QtCore import QSettings, QTimer, Slot
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QPushButton,
     QVBoxLayout,
@@ -112,22 +112,39 @@ class UnlockDialog(QDialog):
         self.error.setStyleSheet('color: #d34848')
         layout.addWidget(self.error)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText('确认')
+        self.ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.ok_button.setText('确认')
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('取消')
         self._button_connections = [buttons.accepted.connect(self.accept),
                                     buttons.rejected.connect(self.reject)]
         layout.addWidget(buttons)
         self.password.setFocus()
+        self.failures = 0
+        # 定时器挂在对话框上：对话框关闭时一起销毁，避免它晚点回调已删除的控件
+        self.retry_timer = QTimer(self)
+        self.retry_timer.setSingleShot(True)
+        self.retry_timer.timeout.connect(self._allow_retry)
 
     @Slot()
     def accept(self):
         if not self.lock.verify(self.password.text()):
+            self.failures += 1
             self.error.setText('密码不正确，请重试')
             self.password.clear()
             self.password.setFocus()
+            if self.failures >= 5:
+                # 现场大屏前可能有人反复试默认密码，连错五次先缓两秒
+                self.ok_button.setEnabled(False)
+                self.error.setText('连续输错次数过多，请 2 秒后再试')
+                self.retry_timer.start(2000)
             return
+        self.failures = 0
         self.password.clear()
         super().accept()
+
+    def _allow_retry(self):
+        self.ok_button.setEnabled(True)
+        self.error.setText('密码不正确，请重试')
 
     @Slot()
     def reject(self):

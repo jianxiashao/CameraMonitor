@@ -30,6 +30,14 @@ class LiveEdgeTests(unittest.TestCase):
         self.assertLessEqual(published, 65, '不该按摄像头的帧率去转换')
         self.assertGreaterEqual(published, 55, '也不能少到画面卡顿')
 
+    def test_background_tiles_can_publish_at_a_lower_rate(self):
+        edge = LiveEdge(publish_interval=0.1)
+        decisions = self.feed(edge, self.realtime(60, step=1 / 60))
+
+        published = sum(1 for d in decisions if d.publish)
+        self.assertLessEqual(published, 11, '背景格 10fps 就够了')
+        self.assertGreaterEqual(published, 8)
+
     def test_falling_behind_switches_to_catching_up(self):
         edge = LiveEdge()
         # 每帧多花 40 毫秒：墙钟走两倍，画面时间戳只走一倍

@@ -6,6 +6,7 @@
 import json
 import os
 import platform
+import re
 import sys
 import zipfile
 from datetime import datetime
@@ -49,14 +50,19 @@ def is_sensitive(key):
     return any(hint in lowered for hint in SENSITIVE_HINTS)
 
 
+def redact_text(text):
+    """去掉 URL 里的 user:pass@。手动 RTSP 地址可能被整段粘进来。"""
+    return re.sub(r'(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+@', r'\1***@', str(text))
+
+
 def redacted_settings(settings):
-    """导出设置，但把密码/令牌类键名整条跳过。"""
+    """导出设置，但把密码/令牌类键名整条跳过，值里的 URL 凭据也抹掉。"""
     data = {}
     for key in sorted(settings.allKeys()):
         if is_sensitive(key):
             continue
         value = settings.value(key)
-        data[key] = value if isinstance(value, (int, float, bool)) else str(value)
+        data[key] = value if isinstance(value, (int, float, bool)) else redact_text(value)
     return data
 
 
@@ -94,5 +100,10 @@ def collect(destination, log_dir='', settings=None, players=()):
             for name in names[-MAX_LOG_FILES:]:
                 path = os.path.join(log_dir, name)
                 if os.path.isfile(path):
-                    archive.write(path, os.path.join(LOGS_FOLDER, name))
+                    try:
+                        with open(path, encoding='utf-8', errors='replace') as handle:
+                            text = handle.read()
+                    except OSError:
+                        continue
+                    archive.writestr(os.path.join(LOGS_FOLDER, name), redact_text(text))
     return destination

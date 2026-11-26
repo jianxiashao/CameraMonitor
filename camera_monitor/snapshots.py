@@ -36,15 +36,21 @@ def encode_jpeg(image, max_width, max_bytes):
 
 
 class UploadCall(QThread):
-    def __init__(self, upload, kind, ip, jpeg, parent=None):
+    def __init__(self, upload, kind, ip, image, parent=None):
         super().__init__(parent)
-        self.upload, self.kind, self.ip, self.jpeg = upload, kind, ip, jpeg
+        self.upload, self.kind, self.ip, self.image = upload, kind, ip, image
         self.ok = False
         self.error = ''
 
     def run(self):
         try:
-            self.upload(self.kind, self.jpeg, self.ip)
+            # 缩放和 JPEG 编码放在后台线程：4K 大屏截图在界面线程编码会卡一下
+            limit = SCREEN_LIMIT if self.kind == 'screen' else CAMERA_LIMIT
+            jpeg = encode_jpeg(self.image, *limit)
+            self.image = None
+            if not jpeg:
+                raise ValueError('empty jpeg')
+            self.upload(self.kind, jpeg, self.ip)
             self.ok = True
         except Exception as exc:
             # 截图传不上去只是后台少一张图，不值得打扰现场；但要留个记录，否则永远不知道为什么没图。
@@ -70,18 +76,16 @@ class SnapshotUploader(QObject):
         self.upload = upload
         self.queue = []
         self.worker = None
-        self.stop_timeout_ms = 15_000
+        # 退出时最多在界面线程等这么久；超时就交给 _ORPHANS，别让窗口卡死
+        self.stop_timeout_ms = 5_000
         self._closed = False
 
     def submit(self, kind, image, ip=''):
-        if self._closed:
+        if self._closed or image is None or image.isNull():
             return False
-        limit = SCREEN_LIMIT if kind == 'screen' else CAMERA_LIMIT
-        jpeg = encode_jpeg(image, *limit)
-        if not jpeg:
-            return False
+        # QImage 隐式共享；复制一份，避免界面下一帧替换时后台线程读到半新半旧的数据
         self.queue = [item for item in self.queue if item[:2] != (kind, ip)]
-        self.queue.append((kind, ip, jpeg))
+        self.queue.append((kind, ip, image.copy()))
         self._pump()
         return True
 
@@ -112,8 +116,8 @@ class SnapshotUploader(QObject):
     def _pump(self):
         if self._closed or self.worker is not None or not self.queue:
             return
-        kind, ip, jpeg = self.queue.pop(0)
-        self.worker = UploadCall(self.upload, kind, ip, jpeg, self)
+        kind, ip, image = self.queue.pop(0)
+        self.worker = UploadCall(self.upload, kind, ip, image, self)
         self.worker.finished.connect(self._finished)
         self.worker.start()
 

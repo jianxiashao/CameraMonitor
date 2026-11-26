@@ -92,6 +92,25 @@ class ThumbnailTests(unittest.TestCase):
         self.assertIsNone(args[4])  # The worker loads the vault when no session is supplied.
         controller.cancel_all()
 
+    def test_hikvision_sadp_uses_the_rtsp_template_without_onvif(self):
+        factory = Mock(side_effect=FakeWorker)
+        controller = ThumbnailController(store=Mock(), worker_factory=factory)
+        controller.request(Device('192.168.1.64', protocols=['海康 SADP']))
+        options = factory.call_args.args[3]
+        self.assertEqual('manual', options['mode'])
+        self.assertEqual('rtsp://192.168.1.64:554/Streaming/Channels/101', options['url'])
+        controller.cancel_all()
+
+    def test_manual_rtsp_device_uses_its_own_url(self):
+        factory = Mock(side_effect=FakeWorker)
+        controller = ThumbnailController(store=Mock(), worker_factory=factory)
+        controller.request(Device('camera.local', protocols=['手动 RTSP'],
+                                  rtsp_url='rtsp://camera.local:554/live'))
+        options = factory.call_args.args[3]
+        self.assertEqual('manual', options['mode'])
+        self.assertEqual('rtsp://camera.local:554/live', options['url'])
+        controller.cancel_all()
+
     def test_concurrency_cancellation_and_stale_results(self):
         controller = ThumbnailController(store=Mock(), worker_factory=FakeWorker)
         results=[]

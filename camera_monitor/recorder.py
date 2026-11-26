@@ -192,18 +192,27 @@ class RecorderPool:
         self.recorders = {}
         # 磁盘写满时置上原因，界面提示一次就够
         self.stopped_reason = ''
+        # 25 路时 add() 每秒会被调 25 次，不必每秒都去问一次磁盘
+        self._space_checked_at = 0.0
+        self._has_free_space = True
 
     def _has_space(self):
         if self.stopped_reason:
             return False
+        now = time.monotonic()
+        if now - self._space_checked_at < 30:
+            return self._has_free_space
+        self._space_checked_at = now
         try:
             free = shutil.disk_usage(self.folder).free
         except OSError:
-            return True         # 查不到就按有空间处理，别因为统计失败停止录像
-        if free < MIN_FREE_BYTES:
+            # 查不到就按有空间处理，别因为统计失败停止录像
+            self._has_free_space = True
+            return True
+        self._has_free_space = free >= MIN_FREE_BYTES
+        if not self._has_free_space:
             self.stopped_reason = f'磁盘剩余不足 {MIN_FREE_BYTES // (1024 ** 2)} MB，已暂停录像'
-            return False
-        return True
+        return self._has_free_space
 
     def add(self, ip, image):
         if not self.enabled:
@@ -214,7 +223,12 @@ class RecorderPool:
         if recorder is None:
             recorder = RingRecorder(ip, self.folder, minutes=self.minutes)
             self.recorders[ip] = recorder
-        return recorder.add(image)
+        try:
+            return recorder.add(image)
+        except Exception:
+            # 临时目录被清掉、磁盘只读、编码器异常：不能让定时器每秒抛一次
+            self.stopped_reason = '录像写入失败，已暂停；可查看日志了解原因'
+            return False
 
     def segments(self, ip):
         recorder = self.recorders.get(ip)

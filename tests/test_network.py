@@ -2,11 +2,15 @@ import socket
 import threading
 import unittest
 from camera_monitor.discovery import Interface, scan
+from support import loopback_udp_available
 
 class NetworkTests(unittest.TestCase):
     def test_real_udp_response_is_collected_and_duplicate_merged(self):
+        if not loopback_udp_available():
+            self.skipTest('本机不允许回环 UDP，跳过真实网络用例')
         server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        server.bind(('127.0.0.1', 37810))
+        server.bind(('127.0.0.1', 0))
+        port = server.getsockname()[1]
         server.settimeout(2)
         errors = []
         def reply():
@@ -20,7 +24,8 @@ class NetworkTests(unittest.TestCase):
         thread = threading.Thread(target=reply)
         thread.start()
         try:
-            found = scan([Interface('loopback', '127.0.0.1', '127.0.0.1')], duration=0.4)
+            found = scan([Interface('loopback', '127.0.0.1', '127.0.0.1')],
+                         duration=0.4, dahua_port=port)
             self.assertEqual(len(found), 1)
             self.assertEqual(found[0].model, 'IPC-test')
         finally:

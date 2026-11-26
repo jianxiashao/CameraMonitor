@@ -55,6 +55,26 @@ class DeviceNames(QObject):
             raise OSError('Could not save appearance')
         self.appearance_changed.emit(ip)
 
+    FIT_MODES = ('contain', 'cover', 'stretch')
+
+    def fit_mode(self, ip):
+        # 旧版本一直把源画面拉伸到 16:9，默认沿用，避免升级后画面突然多出黑边
+        value = self.settings.value('fit/' + quote(ip, safe=''), 'stretch')
+        return value if value in self.FIT_MODES else 'stretch'
+
+    def save_fit_mode(self, ip, mode):
+        if mode not in self.FIT_MODES:
+            raise ValueError('Invalid fit mode')
+        key = 'fit/' + quote(ip, safe='')
+        if mode == 'stretch':
+            self.settings.remove(key)
+        else:
+            self.settings.setValue(key, mode)
+        self.settings.sync()
+        if self.settings.status() != QSettings.Status.NoError:
+            raise OSError('Could not save fit mode')
+        self.appearance_changed.emit(ip)
+
     def order(self):
         value = self.settings.value('monitor/order', [])
         return value if isinstance(value, list) else ([value] if isinstance(value, str) else [])

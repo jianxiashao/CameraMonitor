@@ -17,20 +17,7 @@ class WelcomePage(QWidget):
         super().__init__(parent)
         self.setObjectName('welcomePage')
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet('''
-            QWidget#welcomePage { background:#f2f5fb; }
-            QFrame#welcomeCard { background:white; border-radius:16px; }
-            QFrame#welcomeCard QLabel { background:transparent; }
-            QLabel#welcomeTitle { font-size:26px; font-weight:700; color:#111827; }
-            QLabel#welcomeHint { color:#6b7280; font-size:14px; }
-            QLabel#welcomeError { color:#c0392b; font-size:13px; }
-            QLineEdit#welcomeCode { font-size:24px; padding:12px; border:2px solid #2463eb;
-                                    border-radius:10px; background:white; }
-            QPushButton#welcomeStart { background:#2463eb; color:white; font-size:18px;
-                                       font-weight:600; padding:12px; border-radius:10px; border:none; }
-            QPushButton#welcomeStart:disabled { background:#9db7f5; }
-            QPushButton#welcomeAlone { background:transparent; border:none; color:#2463eb; font-size:13px; }
-        ''')
+        # 配色在 theme.py 里，跟着深色/浅色主题一起切换；这里不再写死浅色
 
         card = QFrame()
         card.setObjectName('welcomeCard')

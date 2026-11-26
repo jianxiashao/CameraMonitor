@@ -241,8 +241,8 @@ class ProgrammaticEntryTests(unittest.TestCase):
         self.leave_while_the_fullscreen_animation_runs()
 
         # 1 毫秒的定时器在机器忙（比如整套测试同时在跑）时可能迟迟轮不到，
-        # 死等固定 50 毫秒会偶发失败；这里等到它真的有反应为止（最多 2 秒）
-        deadline = time.monotonic() + 2.0
+        # 死等固定 50 毫秒会偶发失败；这里等到它真的有反应为止（最多 5 秒）
+        deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline and self.window.settling_state is not None:
             QTest.qWait(20)
 

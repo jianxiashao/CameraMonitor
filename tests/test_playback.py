@@ -34,6 +34,20 @@ class PlaybackTests(unittest.TestCase):
             self.assertIsNotNone(image)
             self.assertEqual((image.width(),image.height()), (64,48))
 
+    def test_hikvision_sadp_device_defaults_to_manual_rtsp_template(self):
+        w = PlayerWindow(Device('192.168.1.64', protocols=['海康 SADP']), credential_store=self.store)
+        self.assertEqual(2, w.mode.currentIndex(), 'SADP 默认走手动 RTSP')
+        self.assertEqual('rtsp://192.168.1.64:554/Streaming/Channels/101', w.manual.text())
+        w.close()
+
+    def test_manual_rtsp_device_uses_the_given_address(self):
+        device = Device('camera.local', protocols=['手动 RTSP'],
+                        rtsp_url='rtsp://camera.local:554/live')
+        w = PlayerWindow(device, credential_store=self.store)
+        self.assertEqual(2, w.mode.currentIndex())
+        self.assertEqual('rtsp://camera.local:554/live', w.manual.text())
+        w.close()
+
     def test_player_masks_password_and_does_not_claim_playing_before_frame(self):
         w = PlayerWindow(Device('192.168.1.108', protocols=['大华 DHIP']),credential_store=self.store)
         self.assertEqual(w.password.echoMode(), w.password.EchoMode.Password)
@@ -128,6 +142,20 @@ class PlaybackTests(unittest.TestCase):
         w.set_fill(False)
         self.assertEqual(w.pixmap().width(),300)
         self.assertEqual(w.pixmap().height(),300)
+        w.close()
+
+    def test_fit_modes_switch_between_contain_cover_and_stretch(self):
+        from camera_monitor.playback import VideoSurface
+        w = VideoSurface()
+        w.set_fit_mode('cover')
+        self.assertTrue(w.fill)
+        self.assertFalse(w.stretch)
+        w.set_fit_mode('stretch')
+        self.assertFalse(w.fill)
+        self.assertTrue(w.stretch)
+        w.set_fit_mode('contain')
+        self.assertFalse(w.fill)
+        self.assertFalse(w.stretch)
         w.close()
 
     def test_default_preserves_entire_frame_without_black_background(self):

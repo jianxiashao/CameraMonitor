@@ -3,7 +3,7 @@
 把这份本地源码上传到自己的 GitHub 仓库，再让 Actions 产出
 `CameraMonitor-Windows11-x64`（Windows 11 x64）。
 
-一句话流程：**建一个空仓库 → 关联远程 → push → 在 Actions 里看构建 → 从 Artifacts 下载产物**。
+一句话流程：**建一个空仓库 → 关联远程 → push → 在 Actions 里手动触发构建 → 从 Release / Artifacts 下载产物**。
 
 仓库里已经放好两个脚本，不想敲命令的话直接看 [第 10 节：一键脚本](#10-一键脚本upload-to-githubbat)：双击 `upload-to-github.bat`，输入一次仓库地址就行。
 
@@ -24,7 +24,7 @@ git config --global user.name "你的名字"
 git config --global user.email "你的邮箱@example.com"
 ```
 
-本机已配置为 `jianxiashao` / `297407333@qq.com`。查看当前值：
+示例：本机当前是 `jianxiashao` / `297407333@qq.com`；换电脑时改成你自己的信息。查看当前值：
 
 ```powershell
 git config --global user.name
@@ -40,9 +40,9 @@ git config --global user.email
 | 项目 | 值 |
 | --- | --- |
 | 分支 | `main`（必须是 main，见第 5 节的说明） |
-| 跟踪文件 | 146 个（源码、测试、文档、配置、工作流） |
-| 仓库大小 | 约 5 MB（不含构建产物） |
-| 远程 | 尚未关联 |
+| 跟踪文件 | 150+ 个（源码、测试、文档、配置、工作流） |
+| 仓库大小 | 约 8 MB（不含虚拟环境和构建产物） |
+| 远程 | 可能已关联 `origin`；脚本会读取它，没有时提示输入 |
 
 已经就位的两个关键文件：
 
@@ -56,7 +56,7 @@ git config --global user.email
 ```powershell
 cd E:\python\CameraMonitor-main
 git ls-files --others --exclude-standard   # 现在 git add -A 会收进哪些新文件
-git status --short                          # 应为空
+git status --short                          # 有改动就先 commit，再上传
 ```
 
 > 如果以后把项目复制到别的目录重新开始，需要在该目录执行一次
@@ -88,8 +88,8 @@ https://github.com/<你的用户名>/CameraMonitor.git
 
 | | Public | Private |
 | --- | --- | --- |
-| Actions 额度 | 免费不限 | 每月 2000 分钟免费额度 |
-| Windows runner 计费 | — | **按 2 倍分钟计费**（一次构建实际 10–20 分钟 ≈ 扣 20–40 分钟） |
+| Actions 额度 | 免费不限 | 以 GitHub 当前套餐为准（Free 常见为每月 2000 分钟） |
+| Windows runner 计费 | — | **按 2 倍分钟计费**（一次构建实际 10–20 分钟 ≈ 扣 20–40 分钟，具体以 GitHub 计费规则为准） |
 | Artifacts 下载 | 所有人可见 | 仅自己可见 |
 
 只给自己用、不想公开源码，选 Private 即可；注意额度消耗。
@@ -120,8 +120,8 @@ git push -u origin main
 
 ### 推送之后需要手动运行
 
-Windows 构建设成**只在手动运行时执行**，push 到 main 不会自动跑，
-不会消耗 Actions 额度，也不会在 Actions 里堆一串运行记录：
+Windows 构建**不会因为 push 到 main 自动跑**；只有手动 Run workflow 或推送 `v*` 标签发布时才会构建，
+不会在 Actions 里堆一串日常运行记录：
 
 | Workflow | 产物 | 运行环境 | 触发方式 |
 | --- | --- | --- | --- |
@@ -169,6 +169,7 @@ Release 里的文件长期保留；Artifacts 默认**保留 14 天**，过期后
 | 步骤 | 作用 |
 | --- | --- |
 | Install dependencies | 用 `requirements.txt` + `packaging/requirements-build.txt` 装 Python 3.12 依赖 |
+| Lint | `ruff check camera_monitor tests packaging` |
 | Run regression tests | 跑 `tests/` 全量单元测试（Qt 用 offscreen 模式，不弹窗） |
 | Build portable EXE | PyInstaller 按 `packaging/CameraMonitor-windows.spec` 打单文件 exe |
 | Verify x64 executable | 检查产物确实是 Windows x64 |
@@ -179,7 +180,7 @@ Release 里的文件长期保留；Artifacts 默认**保留 14 天**，过期后
 
 ## 6. 以后的日常流程
 
-改完代码，三行命令即可，构建会自动重跑：
+改完代码，三行命令推送；构建仍要手动触发，不会自动重跑：
 
 ```powershell
 cd E:\python\CameraMonitor-main
@@ -188,9 +189,8 @@ git commit -m "说明这次改了什么"
 git push
 ```
 
-推送**不会**自动开始构建（Windows workflow 只保留手动触发）。
-要把新版本发出去，到 Actions 里手动 Run workflow **Build Windows x64 EXE**，
-产物会覆盖 `v{版本号}` Release 里的同名 zip。
+推送**到 main 不会**自动开始构建；要发新版本，到 Actions 里手动 Run workflow **Build Windows x64 EXE**，
+产物会覆盖 `v{版本号}` Release 里的同名 zip。如果推送的是 `v*` 标签，会改走第 7 节的正式发布流程。
 
 ---
 
@@ -200,8 +200,8 @@ git push
 最后把两个包一起发布到 Releases 页面：
 
 ```powershell
-git tag v0.9.1
-git push origin v0.9.1
+git tag v0.10.0
+git push origin v0.10.0
 ```
 
 | 包 | 来源 |
@@ -264,8 +264,8 @@ Release 的说明文字取自 `packaging/RELEASE.md`，发版前记得更新它�
 
 1. 双击 `upload-to-github.bat`
 2. 第一次运行会提示粘贴仓库地址，例如 `https://github.com/你的用户名/CameraMonitor.git`
-   （地址会写进 git 的 `origin`，**以后运行不再询问**；想换地址在提示里按 `n` 重新输入）
-3. 之后全自动，结束时打印 Actions 地址和要去哪里下载 `CameraMonitor-Windows11-x64`
+   （地址会写进 git 的 `origin`；以后运行会显示已记住的地址，回车确认即可，想换地址按 `n` 重新输入）
+3. 确认地址后自动提交、推送，结束时打印 Actions 地址和手动构建步骤
 
 ### 脚本会做什么
 
@@ -273,7 +273,7 @@ Release 的说明文字取自 `packaging/RELEASE.md`，发版前记得更新它�
 | --- | --- |
 | 1/4 检查环境 | 确认 `git` 可用；目录不是仓库就 `git init -b main` |
 | 2/4 检查待提交内容 | 没配用户名/邮箱就提示输入；有未提交改动就 `git add -A` + 提交（说明默认“更新：<时间>”） |
-| 3/4 关联远程仓库 | 读取已记住的地址或提示输入；地址没变就跳过，改了则 `git remote set-url` |
+| 3/4 关联远程仓库 | 读取已记住的地址或提示输入；已有 `origin` 时重新执行 `git remote set-url`（幂等），没有则 `git remote add` |
 | 4/4 推送到 GitHub | `git push -u origin main`；结束后打印 Actions 链接 |
 
 ### 可选参数

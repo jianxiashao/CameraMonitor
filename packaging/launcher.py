@@ -7,13 +7,13 @@ class NoAutoStart:
     """冒烟测试用的启动项：什么都不做。真的那个会按设置删掉或补上打包机上的启动项。"""
     last_error = ''
 
-    def enable(self):
+    def enable(self, watchdog=False):
         return True
 
     def disable(self):
         return True
 
-    def is_enabled(self):
+    def is_enabled(self, watchdog=False):
         return False
 
 

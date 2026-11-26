@@ -20,8 +20,8 @@ from .autostart import FLAG as AUTOSTART_FLAG
 logger = logging.getLogger(__name__)
 
 LOG_FILE = 'camera_monitor.log'
-LOG_MAX_BYTES = 1024 * 1024
-LOG_BACKUPS = 3
+LOG_MAX_BYTES = 2 * 1024 * 1024
+LOG_BACKUPS = 5
 
 # 守护模式：父进程盯着子进程，异常退出就重新拉起。无人值守的大屏需要这个
 WATCHDOG_FLAG = '--watchdog'
@@ -30,7 +30,7 @@ RESTART_DELAY_SECONDS = 5
 
 def watchdog_command():
     """守护模式要反复拉起的命令（去掉守护标记，否则会无限套娃）。"""
-    extra = [arg for arg in sys.argv[1:] if arg != WATCHDOG_FLAG]
+    extra = [arg for arg in sys.argv[1:] if arg not in (WATCHDOG_FLAG, single_instance.RESTART_FLAG)]
     if getattr(sys, 'frozen', False):
         return [sys.executable] + extra
     return [sys.executable, '-m', 'camera_monitor.app'] + extra
@@ -40,6 +40,17 @@ def run_watchdog():
     """一直守着子进程：异常退出就重新拉起，用户正常关闭（返回 0）才结束。"""
     import subprocess
     import time
+    from datetime import datetime
+    import tempfile
+
+    log_path = os.path.join(tempfile.gettempdir(), 'camera-monitor-watchdog.log')
+
+    def note(text):
+        try:
+            with open(log_path, 'a', encoding='utf-8') as handle:
+                handle.write(f'{datetime.now():%Y-%m-%d %H:%M:%S} {text}\n')
+        except OSError:
+            pass
 
     command = watchdog_command()
     while True:
@@ -47,6 +58,7 @@ def run_watchdog():
         if code == 0:
             return 0
         logger.warning('程序异常退出（返回码 %s），%d 秒后重新拉起', code, RESTART_DELAY_SECONDS)
+        note(f'程序异常退出（返回码 {code}），{RESTART_DELAY_SECONDS} 秒后重新拉起')
         time.sleep(RESTART_DELAY_SECONDS)
 
 
@@ -62,7 +74,7 @@ def allow_session_quit(app, window):
 
 
 def setup_logging(directory):
-    """现场电脑出了问题只能靠日志：写到文件里，满 1 MB 轮换，留 3 份旧的。
+    """现场电脑出了问题只能靠日志：写到文件里，满 2 MB 轮换，留 5 份旧的。
 
     目录建不出来、文件打不开时不写文件，软件照常运行——日志不能反过来让监控起不来。
     返回装上的处理器，没装上返回 None。
@@ -99,10 +111,13 @@ def main():
     log_startup(sys.argv)
     # 崩溃现场也写进这个目录：打包后没有控制台，闪退只能靠它查
     crash_guard.install(log_dir)
-    # 第二个实例直接退出：两套解码线程会把同一批相机挤掉，还会同时写设置和快照
-    instance = single_instance.acquire()
+    # 第二个实例直接退出：两套解码线程会把同一批相机挤掉，还会同时写设置和快照。
+    # 自动重启时新进程可能先起来，多等几秒让旧进程先放锁
+    wait_ms = 5000 if single_instance.RESTART_FLAG in sys.argv else 100
+    instance = single_instance.acquire(wait_ms=wait_ms)
     if instance is None:
-        QMessageBox.information(None, 'Camera Monitor', '程序已经在运行，请切换到已打开的窗口。')
+        if not single_instance.signal_existing():
+            QMessageBox.information(None, 'Camera Monitor', '程序已经在运行，请切换到已打开的窗口。')
         return
     from .app import Window   # 延迟导入：app 反过来要用本模块的启动函数
     app.setWindowIcon(QIcon(str(Path(__file__).parent / 'assets' / 'app-icon.png')))
@@ -110,6 +125,9 @@ def main():
     # 夜间值守用的深色皮肤，上次选过就沿用
     theme.apply(app, theme.current())
     window = Window()
+    activate = getattr(window, 'bring_to_front', None)
+    app.activation_server = (single_instance.start_activation_server(activate)
+                             if callable(activate) else None)
     allow_session_quit(app, window)
     window.show()
     sys.exit(app.exec())

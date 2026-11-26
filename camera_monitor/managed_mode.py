@@ -70,14 +70,30 @@ class EscapeDialog(QDialog):
         cancel = QPushButton('取消，回到监控画面')
         cancel.clicked.connect(self.reject)
         layout.addWidget(cancel)
+        self.failures = 0
+        self.retry_timer = QTimer(self)
+        self.retry_timer.setSingleShot(True)
+        self.retry_timer.timeout.connect(self._allow_retry)
 
     def choose(self, choice):
         if not self.lock.verify(self.password.text()):
+            self.failures += 1
             self.error.setText('密码不正确。')
             self.password.clear()
+            if self.failures >= 5:
+                self.quit_button.setEnabled(False)
+                self.unbind_button.setEnabled(False)
+                self.error.setText('连续输错次数过多，请 2 秒后再试。')
+                self.retry_timer.start(2000)
             return
+        self.failures = 0
         self.choice = choice
         self.accept()
+
+    def _allow_retry(self):
+        self.quit_button.setEnabled(True)
+        self.unbind_button.setEnabled(True)
+        self.error.setText('密码不正确。')
 
 
 def ask_escape(window):
@@ -91,7 +107,10 @@ def ask_escape(window):
 
 def start_new_instance():
     """另起一个本程序。startDetached 不等新进程跑完，立刻返回是否起来了。"""
-    args = sys.argv[1:] if getattr(sys, 'frozen', False) else ['-m', 'camera_monitor.app']
+    from .single_instance import RESTART_FLAG
+
+    extra = [arg for arg in sys.argv[1:] if arg != RESTART_FLAG] + [RESTART_FLAG]
+    args = extra if getattr(sys, 'frozen', False) else ['-m', 'camera_monitor.app'] + extra
     result = QProcess.startDetached(sys.executable, args)
     # PySide6 6.8 返回 (是否成功, pid)，有的版本只返回 bool
     return bool(result[0] if isinstance(result, tuple) else result)
@@ -179,8 +198,10 @@ class ManagedController(QObject):
         self.window.close_settings()
         self.window.wall.set_locked(True)
         self.window.set_presentation(True)
-        # 每次进入都补一遍：现场有人手动删了启动项，下次开机前就能补回来
-        self.autostart.enable()
+        # 每次进入都补一遍：现场有人手动删了启动项，下次开机前就能补回来。
+        # 托管现场没人值守，默认由父进程看住崩溃
+        reconcile_autostart(self.autostart, self.window.device_names.settings,
+                            wanted=True, watchdog=True)
         self.shortcut.setEnabled(True)
         self.seen_playing.clear()
         self.last_status = None
@@ -476,7 +497,9 @@ class ManagedController(QObject):
             lines.append('')
         except Exception:
             logger.exception('生成系统信息失败')
-        for player in list(getattr(self.window, 'players', [])):
+        players = (self.window.active_players() if hasattr(self.window, 'active_players')
+                   else list(getattr(self.window, 'players', [])))
+        for player in players:
             lines.append(f'=== {player.device.ip} ===')
             try:
                 detail = player.connection_diagnostics.toPlainText()[-1500:]

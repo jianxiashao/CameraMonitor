@@ -40,8 +40,11 @@ class LiveEdge:
     的时间。解码跟得上时两者同步，差值稳定；跟不上时差值一路变大。
     """
 
-    def __init__(self, enter=CATCH_UP_ENTER, leave=CATCH_UP_LEAVE, resync_after=RESYNC_AFTER):
+    def __init__(self, enter=CATCH_UP_ENTER, leave=CATCH_UP_LEAVE, resync_after=RESYNC_AFTER,
+                 publish_interval=PUBLISH_INTERVAL):
         self.enter, self.leave, self.resync_after = enter, leave, resync_after
+        # 监控墙上的背景格不需要 30fps：解码线程按这个间隔挑帧送界面
+        self.publish_interval = publish_interval
         self.started_at = None
         self.first_pts = None
         self.catching_up = False
@@ -54,7 +57,7 @@ class LiveEdge:
         """喂一帧进来，拿回这一帧该怎么处置。pts 为 None 表示这一帧没有时间戳。"""
         if self.last_publish is None:
             # 第一帧要立刻出，别让人对着空画面等一个出帧周期
-            self.last_publish = now - PUBLISH_INTERVAL
+            self.last_publish = now - self.publish_interval
 
         if self.first_pts is None:
             # 实时流的第一帧往往没有时间戳（实测大华就是 None）。必须等到真正
@@ -88,9 +91,9 @@ class LiveEdge:
         # 前后脚到，用墙钟量就会把第二帧当成「太密」丢掉——实测 25 fps 的流
         # 只剩一半帧送到界面，画面直接掉到 12 fps。
         if pts is not None and self.last_publish_pts is not None:
-            if pts - self.last_publish_pts < PUBLISH_INTERVAL - PUBLISH_TOLERANCE:
+            if pts - self.last_publish_pts < self.publish_interval - PUBLISH_TOLERANCE:
                 return Decision(publish=False)
-        elif pts is None and now - self.last_publish < PUBLISH_INTERVAL - PUBLISH_TOLERANCE:
+        elif pts is None and now - self.last_publish < self.publish_interval - PUBLISH_TOLERANCE:
             return Decision(publish=False)
         self.last_publish = now
         self.last_publish_pts = pts

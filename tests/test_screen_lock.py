@@ -65,13 +65,27 @@ class ScreenLockTests(unittest.TestCase):
         QTimer.singleShot(0, lambda: QApplication.activeModalWidget().reject())
         self.assertFalse(request_unlock(None, self.lock))
 
-    def test_correct_password_accepts_dialog(self):
-        def enter():
-            dialog = QApplication.activeModalWidget()
-            dialog.password.setText('000000')
+    def test_repeated_wrong_passwords_temporarily_disable_confirm(self):
+        dialog = UnlockDialog(self.lock)
+        for _ in range(5):
+            dialog.password.setText('wrong')
             dialog.accept()
-        QTimer.singleShot(0, enter)
-        self.assertTrue(request_unlock(None, self.lock))
+        self.assertFalse(dialog.ok_button.isEnabled())
+        self.assertIn('2 秒', dialog.error.text())
+        dialog.retry_timer.stop()
+        dialog.reject()
+        dialog.deleteLater()
+        self.app.processEvents()
+
+    def test_correct_password_accepts_dialog(self):
+        # 直接驱动对话框，不依赖 activeModalWidget：整套用例跑下来时，
+        # 别的用例排队的 0ms 定时器可能抢在嵌套事件循环前触发。
+        dialog = UnlockDialog(self.lock)
+        dialog.password.setText('000000')
+        dialog.accept()
+        self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+        dialog.deleteLater()
+        self.app.processEvents()
 
     def test_settings_dialog_change_and_reset(self):
         dialog = PasswordSettingsDialog(self.lock)

@@ -18,6 +18,19 @@ RECONNECT_WAIT_SECONDS = 12
 
 logger = logging.getLogger(__name__)
 
+
+def _inset_gap(rect, gap):
+    """给格子留出间距，同时保持这一格原来的宽高比（横向铺满时不是 16:9）。"""
+    if gap <= 0:
+        return rect
+    x, y, width, height = rect
+    # 等比缩小，而不是宽高各减 gap：后者会把「横向铺满」又拉回 16:9
+    factor = max(0.0, 1.0 - (gap * 2) / max(1, min(width, height)))
+    inner_width = max(1, round(width * factor))
+    inner_height = max(1, round(height * factor))
+    return (x + (width - inner_width) // 2, y + (height - inner_height) // 2,
+            inner_width, inner_height)
+
 # 傻瓜模式下画面上的这些鼠标动作一律吞掉：现场不能放大、拖动、点开菜单
 LOCKED_EVENTS=(QEvent.Type.MouseButtonPress,QEvent.Type.MouseButtonRelease,QEvent.Type.MouseButtonDblClick,
     QEvent.Type.MouseMove,QEvent.Type.ContextMenu,QEvent.Type.Wheel)
@@ -26,12 +39,11 @@ LOCKED_EVENTS=(QEvent.Type.MouseButtonPress,QEvent.Type.MouseButtonRelease,QEven
 class CameraTile(QFrame):
     remove_requested=Signal(object)
     settings_requested=Signal(object)
-    HEADER=40
 
     def __init__(self,number,device,credential_store,parent=None):
         super().__init__(parent)
         self.setObjectName('cameraTile')
-        self.setStyleSheet('QFrame#cameraTile {background:#101a28; border:0px solid #dce4ed; border-radius:0px;}')
+        self.setStyleSheet('QFrame#cameraTile {background:#0b1422; border:1px solid #1e2d44; border-radius:10px;}')
         self.monitor=parent
         self.setAcceptDrops(True)
         self.drag_start=None
@@ -44,7 +56,6 @@ class CameraTile(QFrame):
         self.player.layout().removeWidget(self.player.surface)
         self.player.surface.setParent(self)
         self.player.surface.setMinimumSize(1,1)
-        self.player.surface.set_stretch(True)
         self.player.surface.installEventFilter(self)
         self.player.surface.aspect_changed.connect(lambda _:self.monitor.schedule_layout())
         self.player.surface.activated.connect(lambda:self.monitor.toggle_focus(self))
@@ -87,9 +98,11 @@ class CameraTile(QFrame):
         self.settings=QPushButton('设置');self.settings.clicked.connect(self.show_settings)
         self.replay=QPushButton('回看');self.replay.setToolTip('看这台相机最近几分钟的缩时画面')
         self.replay.clicked.connect(self.show_recording)
+        self.ptz=QPushButton('云台');self.ptz.setToolTip('ONVIF 云台方向控制与预置位')
+        self.ptz.clicked.connect(self.show_ptz)
         self.expand=QPushButton('放大');self.expand.clicked.connect(lambda:self.monitor.toggle_focus(self))
         self.remove=QPushButton('移除');self.remove.clicked.connect(lambda:self.remove_requested.emit(self))
-        for button in (self.start,self.stop,self.settings,self.replay,self.expand,self.remove):
+        for button in (self.start,self.stop,self.settings,self.replay,self.ptz,self.expand,self.remove):
             actions.addWidget(button)
             button.installEventFilter(self)
         self.more=QPushButton('操作')
@@ -97,7 +110,15 @@ class CameraTile(QFrame):
         menu.addAction('连接',self.player.connect_camera)
         menu.addAction('停止',self.player.stop_playback)
         menu.addAction('连接设置',self.show_settings)
+        menu.addAction('云台控制',self.show_ptz)
         menu.addAction('最近几分钟回看',self.show_recording)
+        fit_menu=menu.addMenu('画面比例')
+        current_fit=self.monitor.device_names.fit_mode(device.ip)
+        for label,mode in (('完整画面','contain'),('铺满裁剪','cover'),('拉伸铺满','stretch')):
+            action=fit_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(current_fit==mode)
+            action.triggered.connect(lambda checked=False,m=mode:self.set_fit_mode(m))
         menu.addAction('放大 / 返回',lambda:self.monitor.toggle_focus(self))
         menu.addAction('移除',lambda:self.remove_requested.emit(self))
         self.more.setMenu(menu);actions.addWidget(self.more);self.more.installEventFilter(self)
@@ -123,6 +144,7 @@ class CameraTile(QFrame):
 
     def refresh_overlay(self, ip=None):
         if ip is not None and ip != self.player.device.ip:return
+        self.player.surface.set_fit_mode(self.monitor.device_names.fit_mode(self.player.device.ip))
         color, self.name_corner = self.monitor.device_names.appearance(self.player.device.ip)
         self.name_overlay.setText(self.monitor.device_names.display(self.player.device))
         self.name_overlay.setStyleSheet(f'color:{color};background:rgba(0,0,0,95);font-size:16px;font-weight:600;padding:4px 8px;border-radius:3px;')
@@ -178,6 +200,8 @@ class CameraTile(QFrame):
     def layout_contents(self):
         if not hasattr(self,'controls'):return
         fullscreen=self.monitor.presentation
+        # 解码宽度跟格子走：小格不必解到 1280，下一次重连生效
+        self.player.preview_width = max(480, min(1280, self.width() * 2))
         self.title.hide();self.status.hide()
         self.player.surface.setGeometry(self.rect())
         width=min(self.player.surface.width(),350)
@@ -250,11 +274,28 @@ class CameraTile(QFrame):
         viewer = RecordingViewer(title, segments, self)
         viewer.exec()
 
+    def set_fit_mode(self, mode):
+        try:
+            self.monitor.device_names.save_fit_mode(self.player.device.ip, mode)
+        except (OSError, ValueError):
+            self.monitor.hint.setText('画面比例未保存，请检查本机设置权限。')
+        self.player.surface.set_fit_mode(mode)
+
+    def show_ptz(self):
+        """ONVIF 云台控制。相机不支持时对话框会说明原因。"""
+        from .ptz import PtzDialog
+        dialog = PtzDialog(self.player.device, self.player.username.text(),
+                           self.player.password.text(), self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
     def sync_controls(self):
         busy=self.player.busy()
         narrow=self.player.surface.width()<280
         self.more.setVisible(narrow)
-        for button in (self.settings,self.expand,self.remove):button.setVisible(not narrow)
+        for button in (self.settings,self.ptz,self.expand,self.remove):button.setVisible(not narrow)
         self.start.setVisible(not busy and not narrow);self.stop.setVisible(busy and not narrow)
         self.start.setEnabled(not busy);self.stop.setEnabled(busy and not self.player.stopping)
 
@@ -272,7 +313,9 @@ class EmptySlot(QLabel):
         self.slot_index=0
         self.setAcceptDrops(True)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet('background:#172333;color:#8293a8;border:1px solid #354255;')
+        self.setObjectName('emptySlot')
+        self.setStyleSheet('background:#0d1929;color:#6f8299;border:1px dashed #2a3a50;'
+                           'border-radius:10px;font-size:12px;')
 
     def dragEnterEvent(self,event):
         if self.monitor.locked:event.ignore();return
@@ -316,6 +359,7 @@ class MultiView(QDialog):
         # 整个窗口共用一份：以前每个 PlayerWindow 各建各的，测试里就会写到真实配置
         self.connection_options=connection_options if connection_options is not None else ConnectionOptions()
         if embedded:self.setWindowFlags(Qt.WindowType.Widget)
+        self.setObjectName('wallPanel')
         self.setWindowTitle('Camera Monitor · 多画面监控')
         self.resize(1200,850)
         self.setMinimumSize(620,350) if embedded else self.setMinimumSize(820,600)
@@ -346,14 +390,17 @@ class MultiView(QDialog):
         self.placeholders=[]
         self.closing=False
         layout=QVBoxLayout(self)
+        layout.setContentsMargins(0,0,0,0)
+        layout.setSpacing(10)
         heading=QLabel('多画面监控')
-        heading.setStyleSheet('font-size:24px; font-weight:600;')
+        heading.setObjectName('wallTitle')
         if embedded:heading.setText('实时监控')
-        self.toolbar_widget=QWidget()
+        self.toolbar_widget=QWidget();self.toolbar_widget.setObjectName('toolbarCard')
         toolbar=QHBoxLayout(self.toolbar_widget)
-        toolbar.setContentsMargins(0,0,0,0)
+        toolbar.setContentsMargins(14,10,14,10)
+        toolbar.setSpacing(10)
         toolbar.addWidget(heading)
-        self.fill_width=QCheckBox('横向铺满（允许变形）')
+        self.fill_width=QCheckBox('横向铺满')
         self._fill_width=str(self.device_names.settings.value('monitor/fill_width',False)).lower() in ('true','1')
         self.fill_width.setChecked(self._fill_width)
         self.fill_width.setToolTip('消除左右留白，画面横向拉宽；关闭后恢复 16:9。')
@@ -381,19 +428,17 @@ class MultiView(QDialog):
         for count in (6,10,15):self.featured.addItem(f'一大多小 · {count} 格',count)
         self.featured.activated.connect(lambda _:self.change_layout('featured'))
         toolbar.addWidget(self.featured)
-        self.display_mode=ChoiceButton()
-        self.display_mode.addItems(['完整画面', '铺满（裁剪）'])
-        self.display_mode.setToolTip('等比铺满会裁剪边缘；完整画面保留全部内容，可能留边。')
-        self.display_mode.currentIndexChanged.connect(self.update_display_mode)
-        toolbar.addWidget(self.display_mode)
-        self.start_all=QPushButton('一键重连')
+        self.start_all=QPushButton('一键重连');self.start_all.setObjectName('accentSoft')
+        self.start_all.setMinimumHeight(34)
         self.start_all.setToolTip('先停掉全部画面，等网络线程收尾后重新连接。摄像头断网、换过密码之后用这个。')
         self.start_all.clicked.connect(self.reconnect_all)
-        self.stop_all=QPushButton('一键断开')
+        self.stop_all=QPushButton('一键断开');self.stop_all.setObjectName('ghost')
+        self.stop_all.setMinimumHeight(34)
         self.stop_all.setToolTip('停掉全部画面，不改动任何配置。')
         self.stop_all.clicked.connect(self.stop_everything)
         # 巡检：一键检测 + 巡检截图 收进一个下拉菜单
-        self.patrol=QPushButton('巡检功能')
+        self.patrol=QPushButton('巡检功能');self.patrol.setObjectName('ghost')
+        self.patrol.setMinimumHeight(34)
         self.patrol.setToolTip('一键检测：逐路重新取画面并汇总状态\n巡检截图：把每路当前画面存成图片')
         self.patrol_menu=QMenu(self.patrol)
         self.patrol.setMenu(self.patrol_menu)
@@ -408,33 +453,42 @@ class MultiView(QDialog):
         self.toolbar_right=QWidget()
         self.right_layout=QHBoxLayout(self.toolbar_right)
         self.right_layout.setContentsMargins(0,0,0,0)
-        self.right_layout.setSpacing(6)
+        self.right_layout.setSpacing(8)
         toolbar.addWidget(self.toolbar_right)
         # 一键重连 / 一键断开 / 巡检功能 和后面的云端同步一起，整组右对齐排在同一条线上
         for widget in (self.start_all, self.stop_all, self.patrol):
             self.right_layout.addWidget(widget)
         # 设置：原来侧边栏「更多操作」里的功能都收进这个菜单
-        self.settings_button=QPushButton('设置')
+        self.settings_button=QPushButton('设置');self.settings_button.setObjectName('ghost')
+        self.settings_button.setMinimumHeight(34)
         self.settings_menu=QMenu(self.settings_button)
         self.settings_button.setMenu(self.settings_menu)
         self.right_layout.addWidget(self.settings_button)
-        self.fullscreen=QPushButton('全屏')
+        self.fullscreen=QPushButton('全屏');self.fullscreen.setObjectName('primary')
+        self.fullscreen.setMinimumHeight(34)
         self.fullscreen.clicked.connect(self.fullscreen_requested)
         self.right_layout.addWidget(self.fullscreen)
         layout.addWidget(self.toolbar_widget)
-        self.layout_toolbar=QWidget()
+        self.layout_toolbar=QWidget();self.layout_toolbar.setObjectName('layoutCard')
         layout_choices=QHBoxLayout(self.layout_toolbar)
-        layout_choices.setContentsMargins(0,0,0,0)
-        layout_choices.addWidget(QLabel('分屏'))
+        layout_choices.setContentsMargins(14,8,14,8)
+        layout_choices.setSpacing(6)
+        section_label=QLabel('分屏布局');section_label.setObjectName('subsectionTitle')
+        layout_choices.addWidget(section_label)
         self.equal_buttons={4:self.four,9:self.nine}
         for count in (12,16,20,25):
             button=QPushButton(f'{count}画面')
             button.clicked.connect(lambda checked=False,n=count:self.change_layout(n))
             self.equal_buttons[count]=button
         for button in self.equal_buttons.values():
-            toolbar.removeWidget(button);button.setMinimumWidth(62);layout_choices.addWidget(button)
-        toolbar.removeWidget(self.featured);layout_choices.addWidget(self.featured)
+            toolbar.removeWidget(button)
+            button.setObjectName('seg');button.setMinimumWidth(58);button.setMinimumHeight(32)
+            layout_choices.addWidget(button)
+        toolbar.removeWidget(self.featured)
+        self.featured.setObjectName('seg');self.featured.setMinimumHeight(32)
+        layout_choices.addWidget(self.featured)
         self.columns_choice=ChoiceButton()
+        self.columns_choice.setObjectName('seg');self.columns_choice.setMinimumHeight(32)
         self.columns_choice.setToolTip('设置当前等分布局每行的画面数量；每格保持 16:9。')
         self.columns_choice.activated.connect(lambda _:self.set_grid_columns(self.columns_choice.currentData()))
         layout_choices.addWidget(self.columns_choice)
@@ -463,14 +517,12 @@ class MultiView(QDialog):
         self.organization_header.setFixedHeight(48)
         self.organization_header.setStyleSheet('font-size:24px;font-weight:600;color:white;background:#152235;')
         layout.addWidget(self.organization_header);self.organization_header.hide()
-        self.message=QLabel('每格独立播放；需要密码时打开该格的“连接设置”。')
-        self.message.setWordWrap(True)
-        self.message.hide()
-        scroll=self.scroll=QScrollArea()
+        scroll=self.scroll=QScrollArea();scroll.setObjectName('wallScroll')
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setWidgetResizable(True)
-        self.canvas=WatchCanvas()
+        self.canvas=WatchCanvas();self.canvas.setObjectName('watchCanvas')
         self.canvas.setAttribute(Qt.WidgetAttribute.WA_StyledBackground,True)
         self.canvas.resized.connect(self.schedule_layout)
         self.empty=QLabel('双击左侧设备，开始实时监控',self.canvas)
@@ -479,13 +531,12 @@ class MultiView(QDialog):
         scroll.setWidget(self.canvas)
         layout.addWidget(scroll,1)
         self.hint=QLabel('拖动交换画面 · 单击放大 / 返回 · 全屏按 Esc 返回')
+        self.hint.setObjectName('wallHint')
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.hint.setStyleSheet('color:#8191a5; font-size:13px; padding:12px;')
         layout.addWidget(self.hint)
         if embedded:
             self.choice.hide()
             self.add.hide()
-            self.display_mode.hide()
         self.update_devices(devices)
         self.relayout()
 
@@ -518,9 +569,6 @@ class MultiView(QDialog):
         self.schedule_layout()
         self.layout_changed.emit()
 
-    def update_display_mode(self):
-        for tile in self.tiles:tile.player.surface.set_stretch(True)
-
     def update_devices(self,devices):
         self.choice.clear()
         for device in devices:self.choice.addItem(f'{device.ip} · {self.device_names.display(device)}',device)
@@ -545,7 +593,6 @@ class MultiView(QDialog):
         tile.remove_requested.connect(self.remove_tile)
         tile.settings_requested.connect(self.settings_requested)
         tile.player.playing.connect(self.playing)
-        tile.player.surface.set_stretch(True)
         tile.player.connection_changed.connect(self.note_connection_change)
         self.tiles.append(tile)
         preferred=self.saved_slots.index(device.ip) if device.ip in self.saved_slots else -1
@@ -553,7 +600,7 @@ class MultiView(QDialog):
         self.slots[index]=tile
         self.tiles=[t for t in self.slots if t is not None]
         self.relayout()
-        self.message.setText(f'已添加 {len(self.tiles)} 台摄像头。点击“全部连接”，或在每格单独连接。')
+        self.hint.setText(f'已添加 {len(self.tiles)} 台摄像头。点击“全部连接”，或在每格单独连接。')
         self.layout_changed.emit()
         return True
 
@@ -569,9 +616,9 @@ class MultiView(QDialog):
         focused=self.focused_tile in self.tiles
         count=1 if focused else self.capacity
         rects=wall_rectangles(count,width,height,not focused and self.capacity in (6,10,15),
-                              header=0 if self.presentation else CameraTile.HEADER,
-                              gap=1 if self.presentation else 4,
                               columns=None if focused else self.grid_columns(),fill_width=self._fill_width)
+        if not self.presentation:
+            rects=[_inset_gap(rect, 4) for rect in rects]
         missing=count-len(visible)
         while len(self.placeholders)>missing:
             placeholder=self.placeholders.pop();placeholder.hide();placeholder.deleteLater()
@@ -581,7 +628,7 @@ class MultiView(QDialog):
         empty_indices=[] if focused else [i for i in range(self.capacity) if self.slots[i] is None]
         for placeholder,index in zip(self.placeholders,empty_indices):
             placeholder.slot_index=index
-            placeholder.setText(f'画面 {index+1:02d}\n拖动摄像头到此处')
+            placeholder.setText(f'空位 {index+1:02d}\n拖入摄像头')
             placeholder.setGeometry(*rects[index]);placeholder.show()
         for tile in visible:
             index=0 if focused else self.slots.index(tile)
@@ -592,10 +639,26 @@ class MultiView(QDialog):
             if tile not in visible:tile.hide()
         for mode,button in self.equal_buttons.items():
             button.setStyleSheet('background:#2463eb;color:white;border:1px solid #2463eb;' if self.layout_mode==mode else '')
+        self.apply_frame_rates()
+
+    def apply_frame_rates(self):
+        """聚焦格 25fps，背景格 10fps（大屏 8fps），被遮住的格子 5fps。
+
+        25 路全按 30fps 缩放绘制，低配机器会一直满负载；监控墙不需要那么流畅。
+        """
+        for tile in self.tiles:
+            if tile is self.focused_tile:
+                interval = 1 / 25
+            elif tile.isHidden():
+                interval = 1 / 5
+            else:
+                interval = 1 / (8 if self.presentation else 10)
+            tile.player.set_publish_interval(interval)
 
     def set_presentation(self,enabled):
         self.presentation=enabled
-        self.canvas.setStyleSheet('background:#101a28;' if enabled else '')
+        self.canvas.setProperty('presentation', 'true' if enabled else 'false')
+        self.canvas.style().unpolish(self.canvas);self.canvas.style().polish(self.canvas)
         self.toolbar_widget.setVisible(not enabled);self.layout_toolbar.setVisible(not enabled);self.hint.setVisible(not enabled)
         if enabled:self.organization_panel.hide()
         self.organization_header.setVisible(enabled and bool(self.organization_header.text()))
@@ -775,10 +838,10 @@ class MultiView(QDialog):
         if self.closing:
             return
         if self.recorders.stopped_reason:
-            # 磁盘不够了：提示一次，然后不再录
+            # 磁盘不够 / 写入失败：提示一次，然后不再录
             if not getattr(self, 'recording_warned', False):
                 self.recording_warned = True
-                self.message.setText(self.recorders.stopped_reason)
+                self.hint.setText(self.recorders.stopped_reason)
                 logger.warning('%s', self.recorders.stopped_reason)
             return
         for tile in list(self.tiles):

@@ -7,6 +7,7 @@ the wall keeps playing from what is already on this computer.
 from __future__ import annotations
 
 import json
+import time
 import uuid
 
 from PySide6.QtCore import QObject, QSettings, QThread, QTimer, Signal
@@ -240,10 +241,14 @@ class CloudSync(QObject):
         self.poll_timer.stop()
         self.push_timer.stop()
         self.storage_retry_timer.stop()
+        # 所有在途请求共用同一个截止时间。以前是每个请求各等 10 秒，
+        # 同时有两三个请求时关窗口就会卡半分钟
+        deadline = time.monotonic() + READ_TIMEOUT + 2
         for call in list(self.calls):
             if call.isRunning():
-                # 网络调用本身已有超时上界，这里留足它跑完的时间
-                call.wait(int(READ_TIMEOUT * 1000) + 2000)
+                remaining = max(0.0, deadline - time.monotonic())
+                if remaining:
+                    call.wait(int(remaining * 1000))
         self.calls.clear()
 
     def busy(self):

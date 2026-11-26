@@ -6,7 +6,7 @@
     第一次运行时输入一次仓库地址（例如 https://github.com/你的用户名/CameraMonitor.git），
     脚本会写进 git 的 remote，之后再运行就不用再输入。
     运行过程只做四件事：确认 git 环境、提交未提交的改动、关联远程、push 到 main 分支。
-    推送成功后 GitHub Actions 会自动开始构建，脚本最后会打印该去哪下载 exe。
+    推送成功后不会自动构建：脚本最后会打印 Actions 地址和手动 Run workflow 的步骤。
 
 .PARAMETER Repository
     仓库地址。不传时会读取已有的 origin，或者提示你输入一次。
@@ -41,8 +41,9 @@ $script:gitCode = 0
 function Invoke-Git {
     # 统一入口：收集 git 的输出（含 stderr），退出码放在 $script:gitCode。
     # 注意函数名不能叫 Git：PowerShell 命令名不区分大小写，会把外部的 git.exe 遮蔽掉。
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    $lines = @(& git @Arguments 2>&1 | ForEach-Object { $_.ToString() })
+    # 用 $args 而不是自定义参数：否则 `add -A` 里的 -A 会被 PowerShell 当成
+    # 函数参数 `-Arguments` 的缩写，报“Missing an argument”。
+    $lines = @(& git @args 2>&1 | ForEach-Object { $_.ToString() })
     $script:gitCode = $LASTEXITCODE
     return $lines
 }

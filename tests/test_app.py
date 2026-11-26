@@ -21,6 +21,15 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.app.clipboard().text(), '192.168.1.20')
         window.close()
 
+    def test_diagnostics_uses_players_on_the_wall_not_the_empty_legacy_list(self):
+        window = make_window(self)
+        device = Device('10.0.0.9')
+        window.add_device(device)
+        self.assertTrue(window.wall.add_device(device))
+        self.assertEqual([], window.players, '旧列表仍只放独立播放器')
+        self.assertEqual([window.wall.tiles[0].player], window.active_players())
+        window.close()
+
     def test_scan_finish_reenables_controls_and_zero_result_explains_limit(self):
         window = make_window(self)
         window.search.setEnabled(False)

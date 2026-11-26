@@ -50,6 +50,20 @@ def same_device_url(url, ip, schemes=('rtsp', 'rtsps')):
         raise StreamError('设备返回了无效或指向其他主机的地址，请检查设备网络配置。') from None
 
 
+def strip_url_credentials(url):
+    """去掉 URL 里的 user:pass@。云端配置、本机快照和诊断包都不该带凭据。"""
+    try:
+        parts = urlsplit(str(url).strip())
+        if parts.username is None and parts.password is None:
+            return str(url).strip()
+        host = f'[{parts.hostname}]' if ':' in (parts.hostname or '') else (parts.hostname or '')
+        if parts.port:
+            host += f':{parts.port}'
+        return urlunsplit(parts._replace(netloc=host))
+    except ValueError:
+        return ''
+
+
 def authenticated_url(url, username, password):
     parts = urlsplit(url)
     if parts.scheme not in ('rtsp', 'rtsps') or not parts.hostname:
@@ -65,6 +79,12 @@ def authenticated_url(url, username, password):
 def dahua_streams(ip, channel=1):
     return [Stream('流畅 · 子码流', f'rtsp://{ip}:554/cam/realmonitor?channel={channel}&subtype=1'),
             Stream('高清 · 主码流', f'rtsp://{ip}:554/cam/realmonitor?channel={channel}&subtype=0')]
+
+
+def hikvision_rtsp_url(ip, channel=1, main=True):
+    """海康常用 RTSP 地址：101=通道 1 主码流，102=子码流；通道 2 是 201/202。"""
+    stream = int(channel) * 100 + (1 if main else 2)
+    return f'rtsp://{ip}:554/Streaming/Channels/{stream}'
 
 
 def envelope(body, username='', password='', offset=0):
@@ -190,6 +210,100 @@ class OnvifClient:
     def _small_enough(found):
         pixels = min(rank[1] for rank in (entry[0] for entry in found))
         return 0 < pixels <= PREFERRED_MAX_PIXELS
+
+    def _media_service(self):
+        """返回 (namespace, endpoint) 里的第一个媒体服务。"""
+        try:
+            services = parse_services(self.call(self.endpoint, DEVICE, 'GetServices',
+                                                '<m:IncludeCapability>false</m:IncludeCapability>'))
+        except AuthError:
+            raise
+        except StreamError:
+            services = []
+        if services:
+            return services[0]
+        root = self.call(self.endpoint, DEVICE, 'GetCapabilities', '<m:Category>Media</m:Category>')
+        for node in root.iter():
+            if local(node) == 'Media':
+                xaddr = text_of(node, 'XAddr')
+                if xaddr:
+                    return MEDIA1, xaddr
+        raise StreamError('相机没有提供媒体服务。')
+
+    def _ptz_service(self):
+        try:
+            services = parse_services(self.call(self.endpoint, DEVICE, 'GetServices',
+                                                '<m:IncludeCapability>false</m:IncludeCapability>'))
+        except AuthError:
+            raise
+        except StreamError:
+            services = []
+        for namespace, endpoint in services:
+            if 'ptz' in namespace.lower():
+                return namespace, endpoint
+        root = self.call(self.endpoint, DEVICE, 'GetCapabilities', '<m:Category>PTZ</m:Category>')
+        for node in root.iter():
+            if local(node) == 'PTZ':
+                xaddr = text_of(node, 'XAddr')
+                if xaddr:
+                    namespace = ('http://www.onvif.org/ver20/ptz/wsdl'
+                                 if 'ver20' in xaddr or 'ver20' in xaddr.lower() else
+                                 'http://www.onvif.org/ver10/ptz/wsdl')
+                    return namespace, xaddr
+        raise StreamError('相机不支持 ONVIF 云台控制。')
+
+    def ptz_context(self):
+        """返回 (PTZ 服务命名空间, endpoint, profile token)。"""
+        namespace, endpoint = self._ptz_service()
+        media_namespace, media_endpoint = self._media_service()
+        root = self.call(media_endpoint, media_namespace, 'GetProfiles')
+        profiles = parse_profiles(root)
+        if not profiles:
+            raise StreamError('相机没有可用的视频通道，无法云台控制。')
+        return namespace, endpoint, profiles[0][0]
+
+    def ptz_move(self, context, x, y, zoom=0):
+        namespace, endpoint, token = context
+        inner = (f'<m:ProfileToken>{escape(token)}</m:ProfileToken>'
+                 f'<m:Velocity><tt:PanTilt x="{x:.2f}" y="{y:.2f}"/>'
+                 f'<tt:Zoom x="{zoom:.2f}"/></m:Velocity>')
+        return self.call(endpoint, namespace, 'ContinuousMove', inner)
+
+    def ptz_stop(self, context):
+        namespace, endpoint, token = context
+        inner = (f'<m:ProfileToken>{escape(token)}</m:ProfileToken>'
+                 '<m:PanTilt>true</m:PanTilt><m:Zoom>true</m:Zoom>')
+        return self.call(endpoint, namespace, 'Stop', inner)
+
+    def ptz_presets(self, context):
+        namespace, endpoint, token = context
+        inner = f'<m:ProfileToken>{escape(token)}</m:ProfileToken>'
+        root = self.call(endpoint, namespace, 'GetPresets', inner)
+        found = []
+        for node in root.iter():
+            if local(node) == 'Preset' and node.attrib.get('token'):
+                found.append((node.attrib['token'], text_of(node, 'Name') or node.attrib['token']))
+        return found
+
+    def ptz_goto_preset(self, context, preset_token):
+        namespace, endpoint, token = context
+        inner = (f'<m:ProfileToken>{escape(token)}</m:ProfileToken>'
+                 f'<m:PresetToken>{escape(preset_token)}</m:PresetToken>')
+        return self.call(endpoint, namespace, 'GotoPreset', inner)
+
+    def set_system_date_and_time(self, when=None):
+        """把相机时间校准到本机（UTC）。ONVIF 摘要认证依赖设备时间。"""
+        when = when or datetime.now(timezone.utc)
+        inner = (
+            '<tds:DateTimeType>Manual</tds:DateTimeType>'
+            '<tds:DaylightSavings>false</tds:DaylightSavings>'
+            '<tds:UTCDateTime>'
+            f'<tt:Time><tt:Hour>{when.hour}</tt:Hour><tt:Minute>{when.minute}</tt:Minute>'
+            f'<tt:Second>{when.second}</tt:Second></tt:Time>'
+            f'<tt:Date><tt:Year>{when.year}</tt:Year><tt:Month>{when.month}</tt:Month>'
+            f'<tt:Day>{when.day}</tt:Day></tt:Date>'
+            '</tds:UTCDateTime>')
+        return self.call(self.endpoint, DEVICE, 'SetSystemDateAndTime', inner)
 
     def streams(self):
         # Correct WS-Security clock skew without changing the camera clock.

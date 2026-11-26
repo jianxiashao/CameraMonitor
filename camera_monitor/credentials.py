@@ -39,6 +39,9 @@ def _store(vault, service, account, secret):
 class CredentialStore:
     def __init__(self, backend=None):
         self.backend=backend
+        # 云端配置落盘、上传去重都会反复读同一批账号。钥匙串每次读都走系统
+        # 服务，25 路时一次同步能读上百次；本进程内缓存一份，写入时同步更新。
+        self._cache={}
 
     def vault(self):
         if self.backend is None:
@@ -57,23 +60,29 @@ class CredentialStore:
         return self.backend
 
     def load(self,device):
+        if device in self._cache:
+            return self._cache[device]
         try:
             value=self.vault().get_password(SERVICE,device)
             if value is None:return None
             obj=json.loads(value)
             if not isinstance(obj,dict) or not all(isinstance(obj.get(k),str) for k in ('username','password')):
                 raise ValueError()
-            return obj['username'],obj['password']
+            self._cache[device]=(obj['username'],obj['password'])
+            return self._cache[device]
         except Exception:
             raise CredentialError('无法读取已保存密码，请手动输入或检查系统钥匙串。') from None
 
     def save(self,device,username,password):
+        if self._cache.get(device)==(username,password):
+            return
         try:
             vault=self.vault()
         except CredentialError:
             raise
         try:
             _store(vault,SERVICE,device,json.dumps({'username':username,'password':password},ensure_ascii=False))
+            self._cache[device]=(username,password)
         except Exception:
             raise CredentialError('密码未能写入系统安全存储，可能是升级后权限失效；请在系统「钥匙串访问」中删除 CameraMonitor 的记录后重试。') from None
 
@@ -82,6 +91,7 @@ class CredentialStore:
             vault=self.vault()
             if vault.get_password(SERVICE,device) is not None:
                 vault.delete_password(SERVICE,device)
+            self._cache.pop(device,None)
         except Exception:
             raise CredentialError('未能删除已保存密码，请检查系统安全存储。') from None
 

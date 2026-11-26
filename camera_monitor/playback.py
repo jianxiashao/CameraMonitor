@@ -15,13 +15,16 @@ from .credentials import CredentialStore, CredentialError
 from . import alerts, theme
 from .device_names import DeviceNames
 from .connection_options import ConnectionOptions
-from .live_edge import LiveEdge
-from .streams import OnvifClient, Stream, StreamError, authenticated_url, same_device_url, dahua_streams
+from .live_edge import LiveEdge, PUBLISH_INTERVAL
+from .streams import (OnvifClient, Stream, StreamError, authenticated_url, dahua_streams,
+                      hikvision_rtsp_url, same_device_url)
 
 # FFmpeg errors can include credential-bearing URLs. UI uses authored messages only.
 av.logging.set_level(av.logging.PANIC)
 
 logger = logging.getLogger(__name__)
+# 关闭窗口时还没退出的校对时间线程：摘出来等它自己结束，别在运行中销毁 QThread
+_CLOCK_ORPHANS = set()
 
 # 设备时间与本机差这么多秒就提示：ONVIF 摘要认证靠设备时间，差太多会登录失败
 CLOCK_SKEW_WARN_SECONDS = 300
@@ -71,19 +74,36 @@ class Decoder(QThread):
     # 画面异常提示（目前只有黑屏）；空字符串表示恢复正常
     alert = Signal(str)
 
-    def __init__(self, url, parent=None, max_width=1920, transport='tcp'):
+    def __init__(self, url, parent=None, max_width=1920, transport='tcp',
+                 publish_interval=PUBLISH_INTERVAL):
         super().__init__(parent)
         if transport not in ('tcp', 'udp'):raise ValueError('Unsupported transport')
         self.transport = transport
         self._url = url
         self.max_width=max_width
+        # 背景格可以少出几帧；改这个值不用重连，解码线程每帧都会读一次
+        self.publish_interval=publish_interval
         self.cancel = threading.Event()
         self._lock = threading.Lock()
         self._frame = None
+        self._edge = None
         self.received = False
         self._last_latency_report = 0.0
+        # 黑屏/冻结判断每秒两次足够；不必每个发布帧都抽样
+        self._last_alert_check = 0.0
         self._black_watch = alerts.BlackScreenWatch()
         self._freeze_watch = alerts.FreezeWatch()
+
+    def set_publish_interval(self, interval):
+        """调整出帧间隔（秒）。监控墙聚焦的格子快一点，背景格慢一点。"""
+        try:
+            interval = float(interval)
+        except (TypeError, ValueError):
+            return
+        self.publish_interval = max(PUBLISH_INTERVAL, min(1.0, interval))
+        edge = self._edge
+        if edge is not None:
+            edge.publish_interval = self.publish_interval
 
     def take_frame(self):
         with self._lock:
@@ -93,7 +113,7 @@ class Decoder(QThread):
     def run(self):
         live = self._url.startswith(('rtsp://', 'rtsps://'))
         retries = 0
-        edge = LiveEdge()
+        edge = self._edge = LiveEdge(publish_interval=self.publish_interval)
         # 探测时长调小之后，个别相机的流会认不出来。只在这种错误上用完整探测
         # 重试一次——超时、认证失败之类再试一遍只会让一墙画面多等一轮。
         full_probe = False
@@ -146,7 +166,9 @@ class Decoder(QThread):
                                 data = bytes(plane)
                                 image = QImage(data, width, height, plane.line_size, QImage.Format.Format_RGB888)
                                 with self._lock: self._frame = image
-                                # 顺手判断黑屏/冻结：连上了却一直是黑画面或一直不动，都是现场常见问题
+                                now = time.monotonic()
+                                # 黑屏抽样很便宜（8×8 个点），每帧都做，告警才够快；
+                                # 冻结指纹稍贵，每秒两次就够，25 路时省掉大量计算
                                 is_black = alerts.sample_is_black(data, width, height, plane.line_size)
                                 state = self._black_watch.observe(is_black)
                                 if state == 'alert':
@@ -154,14 +176,14 @@ class Decoder(QThread):
                                 elif state == 'clear':
                                     self._freeze_watch.reset()
                                     self.alert.emit('')
-                                else:
+                                elif now - self._last_alert_check >= 0.5:
+                                    self._last_alert_check = now
                                     finger = alerts.sample_fingerprint(data, width, height, plane.line_size)
-                                    frozen = self._freeze_watch.observe(finger, time.monotonic())
+                                    frozen = self._freeze_watch.observe(finger, now)
                                     if frozen == 'alert':
                                         self.alert.emit('画面可能卡住：内容长时间没有变化，请检查相机或网络')
                                     elif frozen == 'clear':
                                         self.alert.emit('')
-                                now = time.monotonic()
                                 if now - self._last_latency_report >= LATENCY_REPORT_INTERVAL:
                                     self._last_latency_report = now
                                     self.latency.emit(round(edge.behind, 2))
@@ -169,6 +191,10 @@ class Decoder(QThread):
                             if not session_received:
                                 session_received = self.received = True
                                 self.ready.emit(f'{frame.width} × {frame.height} · {video.codec_context.name.upper()}')
+                            # 稳定播放十秒就把退避清零：否则一台相机一天断几次，
+                            # 退避会一路涨到 30 秒，之后即使早就稳定了也一直等 30 秒
+                            if retries and time.monotonic() - started > 10:
+                                retries = 0
                         message = '视频流已结束，请重新连接。' if self.received else '已连接，但没有收到可解码的视频帧。'
                 except Exception as exc:
                     last_exception = exc
@@ -277,6 +303,13 @@ class VideoSurface(QLabel):
         self.stretch = stretch
         if self._image is not None:self.show_frame(self._image)
 
+    def set_fit_mode(self, mode):
+        """contain=完整画面，cover=铺满裁剪，stretch=拉伸（可能变形）。"""
+        mode = mode if mode in ('contain', 'cover', 'stretch') else 'contain'
+        self.fill = mode == 'cover'
+        self.stretch = mode == 'stretch'
+        if self._image is not None:self.show_frame(self._image)
+
     def set_fill(self, fill):
         self.fill = fill
         if self._image is not None:self.show_frame(self._image)
@@ -297,7 +330,11 @@ class VideoSurface(QLabel):
         self.set_playing(True)
         mode = Qt.AspectRatioMode.KeepAspectRatioByExpanding if self.fill else Qt.AspectRatioMode.KeepAspectRatio
         if self.stretch:mode = Qt.AspectRatioMode.IgnoreAspectRatio
-        pixmap = QPixmap.fromImage(image).scaled(self.size(), mode, Qt.TransformationMode.SmoothTransformation)
+        # 25 格墙上每帧都做平滑缩放很贵；缩到一半以下时用快速缩放，肉眼几乎看不出差别
+        transform = (Qt.TransformationMode.FastTransformation
+                     if self.width() * 2 < image.width() or self.height() * 2 < image.height()
+                     else Qt.TransformationMode.SmoothTransformation)
+        pixmap = QPixmap.fromImage(image).scaled(self.size(), mode, transform)
         if self.fill and not self.stretch:
             pixmap = pixmap.copy((pixmap.width()-self.width())//2, (pixmap.height()-self.height())//2, self.width(), self.height())
         self.setPixmap(pixmap)
@@ -341,6 +378,8 @@ class PlayerWindow(QDialog):
         self._hide_when_ready = False
         self.hosted = False
         self.preview_width=1920
+        # 监控墙按格子大小调整：聚焦格 25fps，背景格 10fps
+        self.publish_interval=PUBLISH_INTERVAL
         self.decoder = None
         self.resolver = None
         # 本次播放累计断线重连次数，云端心跳要用它判断现场是否稳定
@@ -394,7 +433,11 @@ class PlayerWindow(QDialog):
         self.password.setPlaceholderText('摄像头密码')
         self.mode = QComboBox()
         self.mode.addItems(['ONVIF 自动获取通道', '大华 RTSP', '手动 RTSP'])
+        self._hikvision = '海康 SADP' in device.protocols
+        self._manual_default = str(getattr(device, 'rtsp_url', '') or '')
         if '大华 DHIP' in device.protocols: self.mode.setCurrentIndex(1)
+        elif self._manual_default or self._hikvision or '手动 RTSP' in device.protocols:
+            self.mode.setCurrentIndex(2)
         form.addWidget(self.username)
         form.addWidget(self.password)
         form.addWidget(self.mode)
@@ -416,6 +459,11 @@ class PlayerWindow(QDialog):
         options.addWidget(self.channel)
         self.manual = QLineEdit()
         self.manual.setPlaceholderText(f'rtsp://{device.ip}:554/视频路径（账号密码填在上方）')
+        if self._manual_default:
+            self.manual.setText(self._manual_default)
+        elif self._hikvision:
+            # SADP 发现的设备直接填好常用地址，用户改通道号即可
+            self.manual.setText(hikvision_rtsp_url(device.ip))
         options.addWidget(self.manual, 1)
         layout.addLayout(options)
         self.mode.currentIndexChanged.connect(self.update_mode)
@@ -438,6 +486,14 @@ class PlayerWindow(QDialog):
         self.transport_note = QLabel('频繁断流时可停止播放后尝试 UDP；选择会自动保存。')
         self.transport_note.setWordWrap(True)
         layout.addWidget(self.transport_note)
+        clock_row = QHBoxLayout()
+        self.clock_button = QPushButton('校准相机时间')
+        self.clock_button.setToolTip('ONVIF 登录依赖设备时间；反复认证失败时可先校准一次。')
+        self.clock_button.clicked.connect(self.sync_camera_clock)
+        clock_row.addWidget(self.clock_button)
+        clock_row.addStretch(1)
+        layout.addLayout(clock_row)
+        self.clock_worker = None
         controls = QHBoxLayout()
         controls.addWidget(QLabel('视频通道'))
         self.profiles = QComboBox()
@@ -513,6 +569,32 @@ class PlayerWindow(QDialog):
         self.remember.blockSignals(True);self.remember.setChecked(remember);self.remember.blockSignals(False)
         self._verified_credentials = None
 
+    def sync_camera_clock(self):
+        if self.clock_worker is not None and self.clock_worker.isRunning():
+            return
+        from .onvif_actions import ClockSyncWorker
+        self.clock_button.setEnabled(False)
+        self.set_status('正在校准相机时间…')
+        worker = ClockSyncWorker(self.device, self.username.text(), self.password.text(), self)
+        self.clock_worker = worker
+        worker.done.connect(self.clock_synced)
+        worker.failed.connect(self.clock_sync_failed)
+        worker.finished.connect(self.clock_sync_finished)
+        worker.start()
+
+    def clock_synced(self, message):
+        self.set_status(message)
+        self.credential_note.setText(message)
+
+    def clock_sync_failed(self, message):
+        self.set_status(message)
+
+    def clock_sync_finished(self):
+        self.clock_button.setEnabled(True)
+        worker, self.clock_worker = self.clock_worker, None
+        if worker is not None:
+            worker.deleteLater()
+
     def copy_diagnostics(self):
         QApplication.clipboard().setText(f'设备 IP：{self.device.ip}\n传输：{self.transport.currentData().upper()}；连接超时5秒；读取超时4秒；重试间隔3秒\n' + self.connection_diagnostics.toPlainText())
 
@@ -572,6 +654,16 @@ class PlayerWindow(QDialog):
         self.stop_button.setEnabled(value)
         self.play_button.setEnabled(not value and self.profiles.count() > 0)
         self.profiles.setEnabled(not value)
+
+    def set_publish_interval(self, interval):
+        """监控墙用它给背景格降帧，不重连。"""
+        try:
+            interval = max(PUBLISH_INTERVAL, min(1.0, float(interval)))
+        except (TypeError, ValueError):
+            return
+        self.publish_interval = interval
+        if self.decoder is not None:
+            self.decoder.set_publish_interval(interval)
 
     def connect_camera(self):
         if self.busy(): return
@@ -636,7 +728,9 @@ class PlayerWindow(QDialog):
         self.set_status('正在连接视频流，等待首帧…')
         self.rendering = True
         self.set_busy(True)
-        self.decoder = Decoder(url, self, max_width=self.preview_width, transport=self.transport.currentData())
+        self.decoder = Decoder(url, self, max_width=self.preview_width,
+                               transport=self.transport.currentData(),
+                               publish_interval=self.publish_interval)
         self.decoder.diagnostic.connect(self.connection_diagnostics.appendPlainText)
         self.decoder.latency.connect(self.latency_changed)
         self.decoder.alert.connect(self.alert_changed)
@@ -722,6 +816,14 @@ class PlayerWindow(QDialog):
             self.settings_hidden.emit()
             return
         self.stop_playback()
+        if self.clock_worker is not None and self.clock_worker.isRunning():
+            worker = self.clock_worker
+            worker.cancel.set()
+            if not worker.wait(3000):
+                worker.setParent(None)
+                _CLOCK_ORPHANS.add(worker)
+                worker.finished.connect(lambda: (_CLOCK_ORPHANS.discard(worker),
+                                                  worker.deleteLater()))
         if self.busy():
             event.ignore()
             QTimer.singleShot(150,self.close)

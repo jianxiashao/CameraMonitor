@@ -45,7 +45,7 @@ class LoggingSetupTests(unittest.TestCase):
     def test_the_file_rotates_instead_of_growing_forever(self):
         handler = self.install(self.folder)
 
-        self.assertEqual(3, handler.backupCount)
+        self.assertEqual(5, handler.backupCount)
         self.assertLessEqual(handler.maxBytes, 2 * 1024 * 1024)
         self.assertGreater(handler.maxBytes, 0)
 

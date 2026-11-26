@@ -59,9 +59,9 @@ class DeviceListTests(unittest.TestCase):
    widget.setCellText(row,4,'已发现 · 未验证视频')
   widget.show();self.app.processEvents()
   first=widget.rows[0]
-  self.assertEqual(first.height(),78)
-  self.assertEqual(first.thumbnail.width(),80)
-  self.assertEqual(first.thumbnail.height(),45)
+  self.assertEqual(first.height(),86)
+  self.assertEqual(first.thumbnail.width(),88)
+  self.assertEqual(first.thumbnail.height(),50)
   self.assertLessEqual(first.width(),widget.scroll.viewport().width())
   self.assertEqual(widget.item(0,1).text(),full_name)
   self.assertEqual(widget.item(0,1).label.toolTip(),full_name)

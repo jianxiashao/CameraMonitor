@@ -291,7 +291,7 @@ class RecordingAutoStart:
         self.calls = []
         self.last_error = ''
 
-    def enable(self):
+    def enable(self, watchdog=False):
         self.calls.append('enable')
         if not self.works:
             self.last_error = autostart.WRITE_FAILED
@@ -327,6 +327,31 @@ class ReconcileTests(unittest.TestCase):
 
         self.assertIs(False, settings.values[WANTED_KEY],
                       '设置要和实际一致，下一次同步后台才看得到没设上')
+
+
+class WatchdogAutoStartTests(unittest.TestCase):
+    def test_watchdog_flag_is_written_and_recognised(self):
+        registry = FakeRegistry()
+        auto = AutoStart(platform='win32', executable=r'C:\CM\CameraMonitor.exe',
+                         frozen=True, registry=registry)
+        self.assertTrue(auto.enable(watchdog=True))
+        self.assertEqual(rf'"C:\CM\CameraMonitor.exe" {FLAG} --watchdog',
+                         registry.values[APP_NAME])
+        self.assertTrue(auto.is_enabled(watchdog=True))
+        self.assertFalse(auto.is_enabled(watchdog=False))
+
+    def test_mac_plist_gets_the_same_flags(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        agents = Path(folder.name) / 'LaunchAgents'
+        auto = AutoStart(platform='darwin', executable='/Applications/CM.app/Contents/MacOS/CM',
+                         frozen=True, launch_agents=agents)
+        self.assertTrue(auto.enable(watchdog=True))
+        with open(agents / f'{MAC_LABEL}.plist', 'rb') as handle:
+            plist = plistlib.load(handle)
+        self.assertEqual(['/Applications/CM.app/Contents/MacOS/CM', FLAG, '--watchdog'],
+                         plist['ProgramArguments'])
+        self.assertTrue(auto.is_enabled(watchdog=True))
 
 
 if __name__ == '__main__':

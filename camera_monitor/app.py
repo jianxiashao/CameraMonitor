@@ -1,6 +1,7 @@
 from __future__ import annotations
 from .choices import ChoiceButton as QComboBox
 
+import html
 import json
 import logging
 import logging.handlers
@@ -11,12 +12,12 @@ import threading
 import time
 from datetime import datetime
 from PySide6.QtCore import QCoreApplication, QThread, Signal, Qt, QTimer, QEvent, QSettings, QStandardPaths
-from PySide6.QtGui import QShortcut, QKeySequence, QIcon
+from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPainter, QShortcut
 from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QBoxLayout, QInputDialog, QCheckBox,
     QPlainTextEdit, QProgressBar, QSplitter, QFrame, QScrollArea, QStackedWidget, QSizePolicy,
-    QFileDialog, QMessageBox)
+    QFileDialog, QMessageBox, QSystemTrayIcon, QMenu, QDialog)
 from . import __version__
 from .diagnostics import collect as collect_diagnostics
 from .config_io import ConfigError, apply_config, export_config, load_config
@@ -43,6 +44,10 @@ from .cloud import DEFAULT_BASE_URL
 from .cloud_channel import CloudChannel, channel_url
 from .managed_mode import ManagedController
 from .snapshots import SnapshotUploader
+from .event_log import AlertLog
+from .event_log_dialog import EventLogDialog
+from .alert_notify import WebhookNotifier
+from . import layout_profiles
 from . import win_topmost
 
 logger=logging.getLogger(__name__)
@@ -145,41 +150,83 @@ class Window(QMainWindow):
         self.authorized_exit=False
         self.setWindowTitle('Camera Monitor · 内网监控中心')
         self.setWindowIcon(QIcon(str(Path(__file__).parent/'assets'/'app-icon.png')))
+        # 告警历史与现场 Webhook；测试里记进内存库，不写真实 AppData
+        self.alert_log=AlertLog()
+        self.webhook=WebhookNotifier(self)
+        self.tray=None
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray=QSystemTrayIcon(self.windowIcon(),self)
+            self.tray.setToolTip('Camera Monitor · 内网监控中心')
+            tray_menu=QMenu(self)
+            tray_menu.addAction('打开主窗口',self.bring_to_front)
+            tray_menu.addAction('关于 Camera Monitor…',self.show_about)
+            tray_menu.addSeparator()
+            tray_menu.addAction('退出',self.close)
+            self.tray.setContextMenu(tray_menu)
+            self.tray.activated.connect(self.tray_activated)
+            self.tray.show()
         self.resize(1586, 960)
         self.setMinimumSize(1100, 720)
         root = QWidget()
+        root.setObjectName('appRoot')
         self.setCentralWidget(root)
         layout = self.root_layout = QVBoxLayout(root)
-        layout.setContentsMargins(20,20,20,20)
+        layout.setContentsMargins(16,14,16,16)
         layout.setSpacing(12)
-        header=QHBoxLayout()
-        title=QLabel('内网监控中心');title.setObjectName('title')
-        header.addWidget(title)
+        self.header=QFrame();self.header.setObjectName('appHeader')
+        header=QHBoxLayout(self.header);header.setContentsMargins(4,0,4,0);header.setSpacing(12)
+        logo=QLabel();logo.setObjectName('appLogo')
+        logo_pixmap=QIcon(str(Path(__file__).parent/'assets'/'app-icon.png')).pixmap(38,38)
+        if not logo_pixmap.isNull():logo.setPixmap(logo_pixmap)
+        logo.setFixedSize(38,38)
+        header.addWidget(logo)
+        titles=QVBoxLayout();titles.setContentsMargins(0,0,0,0);titles.setSpacing(1)
+        title=QLabel('内网监控中心');title.setObjectName('appTitle')
+        subtitle=QLabel('Camera Monitor · 局域网实时预览');subtitle.setObjectName('appSubtitle')
+        titles.addWidget(title);titles.addWidget(subtitle)
+        header.addLayout(titles)
         header.addStretch()
-        badge=QLabel('局域网设备 · 实时预览');badge.setObjectName('muted')
+        badge=QLabel('ONVIF · 大华 DHIP · 海康 SADP');badge.setObjectName('topBadge')
         header.addWidget(badge)
-        title.hide();badge.hide()
-        layout.addLayout(header)
+        layout.addWidget(self.header)
         split=self.split=QSplitter(Qt.Orientation.Horizontal)
+        split.setChildrenCollapsible(False)
         layout.addWidget(split,1)
-        sidebar=self.sidebar=QWidget();sidebar.setMinimumWidth(228);sidebar.setMaximumWidth(276)
-        side=QVBoxLayout(sidebar);side.setContentsMargins(0,0,12,0);side.setSpacing(10)
-        label=QLabel('设备');label.setStyleSheet('font-size:23px;font-weight:700;');side.addWidget(label)
-        self.device_filter=QLineEdit();self.device_filter.setPlaceholderText('搜索设备名称或 IP')
+        sidebar=self.sidebar=QWidget();sidebar.setObjectName('sidebarCard')
+        sidebar.setMinimumWidth(258);sidebar.setMaximumWidth(304)
+        side=QVBoxLayout(sidebar);side.setContentsMargins(14,14,14,14);side.setSpacing(10)
+        section=QHBoxLayout();section.setContentsMargins(2,0,2,0)
+        label=QLabel('设备');label.setObjectName('sectionTitle');section.addWidget(label)
+        section.addStretch()
+        self.device_count=QLabel('0');self.device_count.setObjectName('countBadge')
+        section.addWidget(self.device_count)
+        side.addLayout(section)
+        self.device_filter=QLineEdit();self.device_filter.setObjectName('searchField')
+        self.device_filter.setClearButtonEnabled(True)
+        self.device_filter.setMinimumHeight(36)
+        self.device_filter.setPlaceholderText('搜索设备名称或 IP')
         self.device_filter.textChanged.connect(self.filter_devices)
         side.addWidget(self.device_filter)
         self.network=QComboBox()
         self.network.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
 
-        actions=QHBoxLayout()
+        actions=QHBoxLayout();actions.setSpacing(8)
         self.search=QPushButton('搜索设备');self.search.setObjectName('primary')
-        self.search.clicked.connect(self.start_scan);actions.addWidget(self.search)
-        self.stop=QPushButton('停止');self.stop.setEnabled(False)
+        self.search.setMinimumHeight(36)
+        self.search.clicked.connect(self.start_scan);actions.addWidget(self.search,1)
+        self.stop=QPushButton('停止');self.stop.setObjectName('ghost');self.stop.setEnabled(False)
+        self.stop.setMinimumHeight(36)
         self.stop.clicked.connect(self.cancel_scan);actions.addWidget(self.stop)
         side.addLayout(actions)
         self.add_ip=QPushButton('按 IP 添加')
+        self.add_ip.setObjectName('ghost');self.add_ip.setMinimumHeight(34)
         self.add_ip.clicked.connect(self.prompt_target_ip)
         side.addWidget(self.add_ip)
+        self.add_rtsp=QPushButton('手动 RTSP')
+        self.add_rtsp.setObjectName('ghost');self.add_rtsp.setMinimumHeight(34)
+        self.add_rtsp.setToolTip('添加只支持 RTSP 的摄像头或录像机通道（如萤石、海康 NVR）')
+        self.add_rtsp.clicked.connect(self.prompt_manual_rtsp)
+        side.addWidget(self.add_rtsp)
         self.refresh=QPushButton('刷新网络');self.refresh.clicked.connect(self.refresh_networks)
 
         self.status=QLabel('准备就绪 · 点击搜索设备');self.status.setWordWrap(True)
@@ -187,18 +234,22 @@ class Window(QMainWindow):
         self.status.setSizePolicy(QSizePolicy.Policy.Preferred,QSizePolicy.Policy.Minimum)
         side.addWidget(self.status)
         self.progress=QProgressBar();self.progress.setRange(0,1);self.progress.setValue(0)
-        self.progress.setTextVisible(False);self.progress.setFixedHeight(3);side.addWidget(self.progress)
+        self.progress.setTextVisible(False);self.progress.setFixedHeight(4);side.addWidget(self.progress)
         # 设备超过一屏时才出现：手动翻页，不自动轮播（免得打断正在盯的画面）
-        pager=QHBoxLayout()
-        self.page_prev=QPushButton('◀ 上一页');self.page_prev.clicked.connect(lambda:self.change_page(-1))
-        self.page_label=QLabel('第 1 / 1 页');self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.page_next=QPushButton('下一页 ▶');self.page_next.clicked.connect(lambda:self.change_page(1))
+        pager=QHBoxLayout();pager.setSpacing(6)
+        self.page_prev=QPushButton('上一页');self.page_prev.setObjectName('ghost')
+        self.page_prev.setMinimumHeight(30);self.page_prev.clicked.connect(lambda:self.change_page(-1))
+        self.page_label=QLabel('第 1 / 1 页');self.page_label.setObjectName('muted')
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_next=QPushButton('下一页');self.page_next.setObjectName('ghost')
+        self.page_next.setMinimumHeight(30);self.page_next.clicked.connect(lambda:self.change_page(1))
         pager.addWidget(self.page_prev);pager.addWidget(self.page_label,1);pager.addWidget(self.page_next)
         side.addLayout(pager)
         for widget in (self.page_prev,self.page_next,self.page_label):widget.hide()
         self.table=DeviceList(compact=True)
         self.table.itemSelectionChanged.connect(self.show_details)
         self.table.cellDoubleClicked.connect(lambda row,column:self.open_player())
+        self.table.rowMenuRequested.connect(self.show_device_menu)
         side.addWidget(self.table,1)
         self.play=QPushButton('连接设置');self.play.setObjectName('primary')
         self.play.setEnabled(False);self.play.clicked.connect(self.open_player);side.addWidget(self.play)
@@ -211,10 +262,10 @@ class Window(QMainWindow):
         # 侧边栏只留状态提示；按钮稍后挪到工具栏「设置」左边
         side.addWidget(self.cloud_panel)
         # 底部只留一个常驻入口：其余高频/低频操作都收进了工具栏的「设置」菜单
-        divider=QFrame();divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet('color:#dce4ee; background:#dce4ee; max-height:1px;')
+        divider=QFrame();divider.setFrameShape(QFrame.Shape.HLine);divider.setObjectName('sidebarDivider')
         side.addWidget(divider)
         self.detail_toggle=QPushButton('设备详情');self.detail_toggle.setCheckable(True)
+        self.detail_toggle.setObjectName('ghost');self.detail_toggle.setMinimumHeight(32)
         self.detail_toggle.setToolTip('展开网络与设备详情、运行日志')
         side.addWidget(self.detail_toggle)
         self.diagnostics=QWidget();diagnostic_layout=QVBoxLayout(self.diagnostics)
@@ -241,16 +292,29 @@ class Window(QMainWindow):
         self.wall.patrol_requested.connect(self.refresh_snapshot)
         self.wall.patrol_finished.connect(self.show_patrol_result)
         self.wall.patrol_screenshot_requested.connect(self.capture_patrol_screenshots)
+        self.wall.layout_changed.connect(self.refresh_pager)
         # 工具栏「设置」菜单：原来侧边栏「更多操作」里的功能全在这里
         settings_menu = self.wall.settings_menu
         settings_menu.addAction('机构名称…', self.wall.toggle_organization)
         settings_menu.addAction('大屏密码…', self.show_password_settings)
+        self.layout_menu = settings_menu.addMenu('布局方案')
+        self.layout_menu.aboutToShow.connect(self.refresh_layout_menu)
         settings_menu.addSeparator()
         # 两个启动开关做成可勾选菜单项；与勾选框的双向同步在勾选框创建后再接
         self.autostart_action = settings_menu.addAction('开机自动启动')
         self.autostart_action.setCheckable(True)
         self.start_fullscreen_action = settings_menu.addAction('启动后自动全屏')
         self.start_fullscreen_action.setCheckable(True)
+        self.watchdog_action = settings_menu.addAction('崩溃后自动重启（守护模式）')
+        self.watchdog_action.setCheckable(True)
+        self.watchdog_action.setToolTip('由父进程盯着，异常退出 5 秒后自动拉起；现场长期无人值守时建议开启。')
+        self.watchdog_action.toggled.connect(self.set_watchdog)
+        self.notify_action = settings_menu.addAction('画面异常时弹窗提示')
+        self.notify_action.setCheckable(True)
+        self.notify_action.setChecked(flag(self.device_names.settings.value('monitor/notify_alerts', True)))
+        self.notify_action.toggled.connect(self.set_notify_alerts)
+        settings_menu.addAction('告警记录…', self.show_event_log)
+        settings_menu.addAction('告警 Webhook…', self.configure_webhook)
         settings_menu.addSeparator()
         settings_menu.addAction('批量账号密码…', self.show_batch_settings)
         settings_menu.addAction('导出诊断包…', self.export_diagnostics)
@@ -261,8 +325,13 @@ class Window(QMainWindow):
         settings_menu.addSeparator()
         self.theme_action = settings_menu.addAction(theme.label(theme.current()), self.toggle_theme)
         settings_menu.addAction('每天自动重启…', self.configure_restart_hour)
+        settings_menu.addAction('云端服务器地址…', self.configure_cloud_server)
+        settings_menu.addAction('检查更新…', self.check_updates)
+        settings_menu.addSeparator()
+        settings_menu.addAction('关于 Camera Monitor…', self.show_about)
         # 云端同步按钮放到「设置」左边（和其它设置项一起右对齐）
         self.cloud_button = self.cloud_panel.detach_button()
+        self.cloud_button.setObjectName('ghost');self.cloud_button.setMinimumHeight(34)
         settings_index = self.wall.right_layout.indexOf(self.wall.settings_button)
         self.wall.right_layout.insertWidget(settings_index, self.cloud_button)
         work.addWidget(self.wall,1)
@@ -271,8 +340,9 @@ class Window(QMainWindow):
         self.settings_panel=QFrame(root);self.settings_panel.setObjectName('settingsPanel')
         panel=QVBoxLayout(self.settings_panel);panel.setContentsMargins(10,6,10,6)
         panel_header=QHBoxLayout()
-        panel_header.addWidget(QLabel('连接设置'),1)
-        collapse=QPushButton('收起设置');collapse.clicked.connect(self.close_settings)
+        panel_title=QLabel('连接设置');panel_title.setObjectName('panelTitle')
+        panel_header.addWidget(panel_title,1)
+        collapse=QPushButton('收起设置');collapse.setObjectName('ghost');collapse.clicked.connect(self.close_settings)
         panel_header.addWidget(collapse);panel.addLayout(panel_header)
         self.settings_scroll=QScrollArea();self.settings_scroll.setWidgetResizable(True)
         self.settings_scroll.setMinimumHeight(200)
@@ -280,12 +350,13 @@ class Window(QMainWindow):
         panel.addWidget(self.settings_scroll)
         self.settings_panel.hide()
         # 入口改成工具栏右侧的普通按钮（不再用竖排标签占一条边）
-        self.settings_tab=QPushButton('连接设置')
+        self.settings_tab=QPushButton('连接设置');self.settings_tab.setObjectName('ghost')
+        self.settings_tab.setMinimumHeight(34)
         self.settings_tab.setToolTip('先在左侧选中设备，或点画面上的「设置」')
         self.settings_tab.clicked.connect(self.open_selected_settings)
         settings_index=self.wall.right_layout.indexOf(self.wall.settings_button)
         self.wall.right_layout.insertWidget(settings_index, self.settings_tab)
-        split.addWidget(workspace);split.setStretchFactor(1,1);split.setSizes([225,1320])
+        split.addWidget(workspace);split.setStretchFactor(1,1);split.setSizes([282,1300])
         # 界面样式由 bootstrap.main 在启动时贴一次（theme.apply）。
         # 窗口自己 setStyleSheet 会盖掉主题；在这里 apply 又会让每个新建窗口都重算全局样式，
         # 测试里构造上百个窗口会变慢，还会把字号等样式泄漏到别的用例里。
@@ -371,6 +442,7 @@ class Window(QMainWindow):
         self.auto_fullscreen_timer=QTimer(self)
         self.auto_fullscreen_timer.setSingleShot(True)
         self.auto_fullscreen_timer.timeout.connect(self.auto_fullscreen)
+        self.restore_geometry()
 
     def set_welcome_visible(self,visible):
         # 欢迎页只是盖在上面的一层，键盘却会穿过去：Tab 走进看不见的侧边栏，F11 把
@@ -410,8 +482,9 @@ class Window(QMainWindow):
     def position_overlay(self):
         root=self.centralWidget()
         # 面板窄一点、贴右上，尽量少盖住画面；关掉时完全不占位
-        width=336
-        self.settings_panel.setGeometry(max(0,root.width()-width-12),12,width,max(200,root.height()-24))
+        width=344
+        top=12 if getattr(self,'header',None) is None or self.header.isHidden() else 64
+        self.settings_panel.setGeometry(max(0,root.width()-width-12),top,width,max(200,root.height()-top-12))
         if hasattr(self,'managed'):self.managed.refresh_overlays()
         if hasattr(self,'welcome'):
             self.welcome.setGeometry(root.rect())
@@ -425,7 +498,8 @@ class Window(QMainWindow):
         self.presentation=enabled
         if enabled:self.close_settings()
         self.sidebar.setVisible(not enabled);self.settings_tab.setVisible(not enabled)
-        self.root_layout.setContentsMargins(*((0,0,0,0) if enabled else (20,20,20,20)))
+        self.header.setVisible(not enabled)
+        self.root_layout.setContentsMargins(*((0,0,0,0) if enabled else (16,14,16,16)))
         self.root_layout.setSpacing(0 if enabled else 12)
         # 工作区始终不留边距：连接设置是浮层，不该挤占画面
         self.work_layout.setContentsMargins(0,0,0,0)
@@ -445,7 +519,12 @@ class Window(QMainWindow):
 
     def bring_to_front(self):
         # 开机自启时窗口常常不在前台，不在前台的全屏窗口压不住任务栏
-        self.raise_();self.activateWindow();self.set_topmost(True)
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_();self.activateWindow()
+        # 只有演示全屏才需要置顶；普通窗口被第二个实例唤起后不应永久压住别的程序
+        if self.presentation:
+            self.set_topmost(True)
 
     def in_fullscreen_guard(self):
         return self.fullscreen_guard_until is not None and self.clock()<self.fullscreen_guard_until
@@ -500,10 +579,15 @@ class Window(QMainWindow):
 
     def refresh_startup_toggles(self):
         """开机启动显示系统启动项的实际状态，自动全屏显示设置。不触发上传。"""
-        values=((self.autostart_toggle,self.autostart.is_enabled()),
+        watchdog = flag(self.device_names.settings.value('monitor/watchdog', False))
+        values=((self.autostart_toggle,self.autostart.is_enabled(watchdog=watchdog)),
             (self.start_fullscreen_toggle,flag(self.device_names.settings.value(START_FULLSCREEN_KEY,False))))
         for box,checked in values:
             box.blockSignals(True);box.setChecked(bool(checked));box.blockSignals(False)
+        if hasattr(self, 'watchdog_action'):
+            self.watchdog_action.blockSignals(True)
+            self.watchdog_action.setChecked(watchdog)
+            self.watchdog_action.blockSignals(False)
 
     def sync_autostart(self):
         """按 monitor/autostart 对齐系统启动项。想要却设不上时提示原因，返回 False。"""
@@ -523,6 +607,64 @@ class Window(QMainWindow):
         settings=self.device_names.settings
         settings.setValue(START_FULLSCREEN_KEY,bool(checked));settings.sync()
         self.note_cloud_change()
+
+    def set_watchdog(self,checked):
+        settings=self.device_names.settings
+        settings.setValue('monitor/watchdog',bool(checked))
+        # 看门狗要靠开机自启拉起来；勾上守护模式时顺手把开机自启也打开
+        if checked:settings.setValue(AUTOSTART_KEY,True)
+        settings.sync()
+        self.sync_autostart()
+        self.note_cloud_change()
+
+    def set_notify_alerts(self, checked):
+        settings=self.device_names.settings
+        settings.setValue('monitor/notify_alerts', bool(checked));settings.sync()
+
+    def show_event_log(self):
+        if self.presentation or not self.welcome.isHidden():return
+        dialog=EventLogDialog(self.alert_log,self)
+        try:dialog.exec()
+        finally:dialog.deleteLater()
+
+    def configure_webhook(self):
+        settings=self.device_names.settings
+        current=str(settings.value('monitor/webhook_url','') or '')
+        value,ok=QInputDialog.getText(self,'告警 Webhook',
+            '画面异常时向这个地址 POST 一条 JSON；留空表示不发送：',text=current)
+        if not ok:return
+        value=value.strip()
+        if value and not value.startswith(('http://','https://')):
+            QMessageBox.warning(self,'告警 Webhook','地址必须以 http:// 或 https:// 开头。')
+            return
+        settings.setValue('monitor/webhook_url',value);settings.sync()
+        self.status.setText('告警 Webhook 已保存' if value else '已关闭告警 Webhook')
+
+    def tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self.bring_to_front()
+
+    def show_about(self):
+        """版本、运行环境和项目链接；托盘菜单和「设置」里都能打开。"""
+        from .about_dialog import AboutDialog
+        dialog=AboutDialog(self)
+        try:dialog.exec()
+        finally:dialog.deleteLater()
+
+    def notify_alert(self, ip, message):
+        """桌面提示 + 可选 Webhook；不阻塞画面。"""
+        settings=self.device_names.settings
+        if flag(settings.value('monitor/notify_alerts', True)):
+            text=f'{ip}：{message}'
+            if self.tray is not None:
+                self.tray.showMessage('摄像头告警', text,
+                    QSystemTrayIcon.MessageIcon.Warning, 6000)
+            else:
+                QApplication.beep()
+                QApplication.alert(self, 3000)
+        url=str(settings.value('monitor/webhook_url','') or '').strip()
+        if url:
+            self.webhook.send(url, ip, message)
 
     def show_password_settings(self):
         if self.presentation:return
@@ -604,6 +746,19 @@ class Window(QMainWindow):
                     # Restore presentation before prompting so Cancel cannot expose settings.
                     QTimer.singleShot(0,self.native_exit_requested)
 
+    def restore_geometry(self):
+        value = self.device_names.settings.value('monitor/window_geometry')
+        if value:
+            try:
+                self.restoreGeometry(value)
+            except (TypeError, ValueError):
+                pass
+
+    def save_geometry(self):
+        settings = self.device_names.settings
+        settings.setValue('monitor/window_geometry', self.saveGeometry())
+        settings.sync()
+
     def _default_folder(self):
         """保存/打开对话框的默认目录：桌面上没有就退回用户主目录。"""
         desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
@@ -647,6 +802,102 @@ class Window(QMainWindow):
                                 f'已导入 {count} 台相机的名称与连接方式。\n重启软件后生效。\n\n'
                                 '密码不在配置文件里，需要重新输入一次。')
 
+    def current_layout_document(self):
+        if self.wall is None:
+            return None
+        settings = self.device_names.settings
+        columns = {}
+        for capacity in (4, 9, 12, 16, 20, 25):
+            value = settings.value(f'monitor/columns/{capacity}', None)
+            if value not in (None, ''):
+                columns[str(capacity)] = value
+        return {
+            'capacity': self.wall.capacity,
+            'slots': [tile.player.device.ip if tile else '' for tile in self.wall.slots[:self.wall.capacity]],
+            'columns': columns,
+            'fill_width': self.wall._fill_width,
+            'organization': self.wall.organization_input.text().strip(),
+        }
+
+    def refresh_layout_menu(self):
+        self.layout_menu.clear()
+        self.layout_menu.addAction('保存当前布局…', self.save_layout_profile)
+        profiles = layout_profiles.load_all(self.device_names.settings)
+        if profiles:
+            self.layout_menu.addSeparator()
+            for name in sorted(profiles):
+                action = self.layout_menu.addAction(name)
+                action.triggered.connect(lambda checked=False, n=name: self.apply_layout_profile(n))
+            self.layout_menu.addSeparator()
+            self.layout_menu.addAction('删除方案…', self.delete_layout_profile)
+
+    def save_layout_profile(self):
+        document = self.current_layout_document()
+        if document is None or not any(document['slots']):
+            self.status.setText('监控墙上还没有摄像头，无法保存布局方案。')
+            return
+        name, ok = QInputDialog.getText(self, '保存布局方案', '给这套布局起个名字：')
+        if not ok or not name.strip():
+            return
+        try:
+            layout_profiles.save_profile(self.device_names.settings, name, document)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, '保存布局方案', str(error))
+            return
+        self.status.setText(f'已保存布局方案「{name.strip()}」')
+
+    def apply_layout_profile(self, name):
+        profiles = layout_profiles.load_all(self.device_names.settings)
+        document = profiles.get(name)
+        if document is None or self.wall is None:
+            return
+        wanted = [ip for ip in document['slots'] if ip]
+        current = [tile.player.device.ip for tile in self.wall.tiles]
+        if set(wanted) != set(current):
+            QMessageBox.information(self, '应用布局方案',
+                '这套方案里的摄像头和当前墙上的不一致。\n请先调整墙上的摄像头，或重新保存方案。')
+            return
+        if not self.wall.change_layout(document['capacity']):
+            QMessageBox.information(self, '应用布局方案', '当前画面数量超过方案格数，请先移除多余画面。')
+            return
+        settings = self.device_names.settings
+        for capacity in (4, 9, 12, 16, 20, 25):
+            key = f'monitor/columns/{capacity}'
+            value = document['columns'].get(str(capacity))
+            settings.setValue(key, value) if value else settings.remove(key)
+        settings.sync()
+        self.wall.saved_slots = list(document['slots'])
+        try:
+            self.device_names.save_slot_order(self.wall.saved_slots)
+        except OSError:
+            pass
+        self.wall.arrange(self.wall.saved_slots)
+        self.wall.organization_input.setText(document['organization'])
+        self.wall.organization_header.setText(document['organization'])
+        self.wall.fill_width.blockSignals(True)
+        self.wall._fill_width = document['fill_width']
+        self.wall.fill_width.setChecked(document['fill_width'])
+        self.wall.fill_width.blockSignals(False)
+        self.wall.sync_columns_choice()
+        self.wall.relayout()
+        self.note_cloud_change()
+        self.status.setText(f'已应用布局方案「{name}」')
+
+    def delete_layout_profile(self):
+        profiles = layout_profiles.load_all(self.device_names.settings)
+        if not profiles:
+            return
+        name, ok = QInputDialog.getItem(self, '删除布局方案', '选择要删除的方案：',
+                                        sorted(profiles), 0, False)
+        if not ok or not name:
+            return
+        try:
+            layout_profiles.delete_profile(self.device_names.settings, name)
+        except OSError as error:
+            QMessageBox.warning(self, '删除布局方案', str(error))
+            return
+        self.status.setText(f'已删除布局方案「{name}」')
+
     def toggle_theme(self):
         mode = theme.toggle()
         theme.apply(QApplication.instance(), mode)
@@ -689,6 +940,31 @@ class Window(QMainWindow):
         name = re.sub(r'[\\/:*?"<>|\s]+', '_', name).strip('._ ')
         return name or device.ip.replace('.', '_')
 
+    @staticmethod
+    def stamp_image(image, text):
+        """在截图上叠加名称/IP/时间；交接和取证时一眼看出这是哪一路、什么时候。"""
+        try:
+            stamped = image.copy()
+            painter = QPainter(stamped)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            font = QFont()
+            font.setPixelSize(max(14, stamped.width() // 40))
+            font.setBold(True)
+            painter.setFont(font)
+            metrics = painter.fontMetrics()
+            padding = max(6, stamped.width() // 120)
+            width = metrics.horizontalAdvance(text) + padding * 2
+            height = metrics.height() + padding * 2
+            y = stamped.height() - height
+            painter.fillRect(0, y, min(width, stamped.width()), height, QColor(0, 0, 0, 160))
+            painter.setPen(QColor('#ffffff'))
+            painter.drawText(padding, y + padding + metrics.ascent(), text)
+            painter.end()
+            return stamped
+        except Exception:
+            logger.warning('巡检截图加文字失败，改为保存原图', exc_info=True)
+            return image
+
     def capture_patrol_screenshots(self):
         """巡检截图：把每路当前画面存成图片，统一放进当天的日期文件夹。"""
         if not self.patrol_folder():
@@ -712,10 +988,13 @@ class Window(QMainWindow):
         except OSError as error:
             QMessageBox.warning(self, '巡检截图', f'无法创建文件夹：\n{target}\n\n{error}')
             return
+        stamp_text = now.strftime('%Y-%m-%d %H:%M:%S')
         stamp = now.strftime('%H%M%S')
         saved, empty, failed = [], [], []
+        report_rows = []
         for tile in tiles:
-            ip = tile.player.device.ip
+            device = tile.player.device
+            ip = device.ip
             image = tile.player.surface.current_image()
             if image is None or image.isNull():
                 # 没在播放：退而求其次用列表里最近一次缩略图
@@ -723,7 +1002,9 @@ class Window(QMainWindow):
             if image is None or image.isNull():
                 empty.append(ip)
                 continue
-            base = f'{self.screenshot_label(tile.player.device)}_{stamp}'
+            label = f'{self.device_names.display(device)} · {ip} · {stamp_text}'
+            image = self.stamp_image(image, label)
+            base = f'{self.screenshot_label(device)}_{stamp}'
             path = target / f'{base}.jpg'
             index = 2
             while path.exists():
@@ -731,6 +1012,7 @@ class Window(QMainWindow):
                 index += 1
             if image.save(str(path), 'JPG', 85):
                 saved.append(path.name)
+                report_rows.append((label, path.name))
             else:
                 failed.append(ip)
         summary = [f'巡检截图：保存 {len(saved)} 张']
@@ -743,6 +1025,27 @@ class Window(QMainWindow):
             lines.append('无画面（未播放且没有缩略图）：' + '、'.join(empty))
         if failed:
             lines.append('保存失败：' + '、'.join(failed))
+        if report_rows:
+            report = target / '巡检报告.html'
+            cards = '\n'.join(
+                f'<figure><img src="{html.escape(name)}" alt="{html.escape(label)}">'
+                f'<figcaption>{html.escape(label)}</figcaption></figure>'
+                for label, name in report_rows)
+            try:
+                report.write_text(
+                    '<!doctype html><meta charset="utf-8">'
+                    f'<title>巡检报告 {html.escape(day)}</title>'
+                    '<style>body{font-family:sans-serif;background:#f5f7fa;margin:24px}'
+                    'h1{font-size:20px}figure{display:inline-block;width:360px;margin:8px;'
+                    'background:white;border-radius:8px;padding:8px;vertical-align:top}'
+                    'img{width:100%;height:auto;border-radius:4px}'
+                    'figcaption{font-size:12px;color:#475569;margin-top:6px}</style>'
+                    f'<h1>巡检报告 · {html.escape(day)}</h1>'
+                    f'<p>{html.escape("，".join(summary))}</p>{cards}',
+                    encoding='utf-8')
+                lines.append(f'报告：{report}')
+            except OSError:
+                lines.append('报告生成失败，截图已保存。')
         lines.append(f'位置：{target}')
         self.show_patrol_result('\n'.join(lines))
 
@@ -755,7 +1058,7 @@ class Window(QMainWindow):
             # 托管/大屏状态不弹窗，免得挡住画面；状态栏和日志里已经有了
             return
         box = QMessageBox(self)
-        box.setWindowTitle('一键巡检')
+        box.setWindowTitle('巡检结果')
         box.setIcon(QMessageBox.Icon.Information)
         box.setText(text)
         box.setStandardButtons(QMessageBox.StandardButton.Ok)
@@ -783,6 +1086,57 @@ class Window(QMainWindow):
         logger.info('按计划在每天 %d 点重启一次', hour)
         from .managed_mode import restart_application
         restart_application()
+
+    def check_updates(self):
+        """手动检查 GitHub Release；不做后台自动联网。"""
+        from .updates import UpdateWorker, version_tuple
+        if getattr(self, '_update_worker', None) is not None:
+            self.status.setText('正在检查更新…')
+            return
+        self.status.setText('正在检查更新…')
+        worker = UpdateWorker(self)
+        self._update_worker = worker
+
+        def finished(latest, url, error):
+            self._update_worker = None
+            if self.closing:
+                return
+            if error or not latest:
+                self.status.setText('检查更新失败，请确认能访问 GitHub。')
+                return
+            if version_tuple(latest) > version_tuple(__version__):
+                answer = QMessageBox.question(self, '检查更新',
+                    f'发现新版本 {latest}，当前是 {__version__}。\n\n现在打开下载页面吗？')
+                if answer == QMessageBox.StandardButton.Yes and url:
+                    from PySide6.QtGui import QDesktopServices
+                    from PySide6.QtCore import QUrl
+                    QDesktopServices.openUrl(QUrl(url))
+            else:
+                QMessageBox.information(self, '检查更新', f'已是最新版本（{__version__}）。')
+
+        worker.result.connect(finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def configure_cloud_server(self):
+        """自建 / 换域名时改云端地址；下一次启动生效。"""
+        settings = QSettings('CameraMonitor', 'Cloud')
+        current = str(settings.value('cloud/base_url', '') or DEFAULT_BASE_URL)
+        value, ok = QInputDialog.getText(self, '云端服务器地址',
+            '留空恢复默认地址。修改后需要重启软件才生效：', text=current)
+        if not ok:
+            return
+        value = value.strip().rstrip('/')
+        if value and not value.startswith(('https://', 'http://')):
+            QMessageBox.warning(self, '云端服务器地址', '地址必须以 http:// 或 https:// 开头。')
+            return
+        if value in ('', DEFAULT_BASE_URL):
+            settings.remove('cloud/base_url')
+        else:
+            settings.setValue('cloud/base_url', value)
+        settings.sync()
+        QMessageBox.information(self, '云端服务器地址',
+                                '已保存，重启软件后生效。\n\n' + (value or DEFAULT_BASE_URL))
 
     def configure_restart_hour(self):
         """设置每天自动重启的小时；-1 表示关闭。"""
@@ -812,11 +1166,17 @@ class Window(QMainWindow):
         try:
             saved = collect_diagnostics(path, log_dir=log_dir,
                                         settings=self.device_names.settings,
-                                        players=list(self.players))
+                                        players=self.active_players())
         except Exception:
             QMessageBox.warning(self, '导出诊断包', '导出失败，请换一个目录再试。')
             return
         QMessageBox.information(self, '导出诊断包', f'已导出到：\n{saved}\n\n文件里不含摄像头密码与云端令牌。')
+
+    def active_players(self):
+        """诊断要读的播放器：墙上的每一格，加上可能存在的独立播放窗口。"""
+        players = [tile.player for tile in (self.wall.tiles if self.wall is not None else [])]
+        players.extend(player for player in self.players if player not in players)
+        return players
 
     def show_batch_settings(self):
         if self.presentation or not self.welcome.isHidden():return
@@ -846,6 +1206,10 @@ class Window(QMainWindow):
                     tile.player.set_connection_credentials(username,password,remember)
             count+=1
         return count,failed
+
+    def refresh_device_count(self):
+        if hasattr(self,'device_count'):
+            self.device_count.setText(str(len(self.devices)))
 
     def filter_devices(self,text):
         if not hasattr(self,'table'):return
@@ -894,6 +1258,38 @@ class Window(QMainWindow):
             '请输入摄像头 IPv4 地址（例如 192.168.2.216）：')
         if accepted:self.start_target_scan(value)
 
+    def prompt_manual_rtsp(self):
+        """添加不响应 ONVIF/SADP、只能走 RTSP 的摄像头或 NVR 通道。"""
+        if self.presentation or not self.welcome.isHidden():return
+        from .manual_rtsp import ManualRtspDialog
+        dialog=ManualRtspDialog(self)
+        try:
+            if dialog.exec()!=QDialog.DialogCode.Accepted:return
+            name, values=dialog.values()
+        finally:
+            dialog.deleteLater()
+        host=values.get('host','')
+        url=values.get('url','')
+        if not host or not url:return
+        device=Device(host,name=name or host,protocols=['手动 RTSP'],rtsp_url=url)
+        self.add_device(device)
+        if not any(tile.player.device.ip==host for tile in self.wall.tiles):
+            self.wall.add_device(device)
+        row=next((i for i in range(self.table.rowCount())
+                  if self.table.item(i,0) and self.table.item(i,0).text()==host),None)
+        if row is not None:
+            self.table.selectRow(row)
+        username=values.get('username','');password=values.get('password','')
+        if username or password:
+            try:self.wall.credential_store.save(host,username,password)
+            except Exception:
+                self.status.setText('摄像头已添加，但账号密码未能保存到系统安全存储。')
+            for tile in self.wall.tiles:
+                if tile.player.device.ip==host:
+                    tile.player.set_connection_credentials(username,password,True)
+        self.open_player(force_settings=True)
+        self.status.setText(f'已手动添加 {name or host} · 请在连接设置中确认账号密码后连接')
+
     def start_target_scan(self, value):
         if self.presentation or (self.worker and self.worker.isRunning()):return
         try:
@@ -920,6 +1316,7 @@ class Window(QMainWindow):
         self.thumbnails.cancel_all()
         if target_ip is None:
             self.devices.clear()
+            self.refresh_device_count()
             self.table.setRowCount(0)
             self.details.clear()
         self.log.clear()
@@ -1010,6 +1407,7 @@ class Window(QMainWindow):
     def add_device(self, device: Device):
         row = list(self.devices).index(device.ip) if device.ip in self.devices else self.table.rowCount()
         self.devices[device.ip] = device
+        self.refresh_device_count()
         self.refresh_tile_device(device)
         if device.ip == self.target_ip:self.target_received = True
         if row == self.table.rowCount():
@@ -1029,7 +1427,7 @@ class Window(QMainWindow):
         for tile in self.wall.tiles:
             current=tile.player.device
             if current.ip!=device.ip or current is device:continue
-            for field in ('name','model','manufacturer'):
+            for field in ('name','model','manufacturer','serial','rtsp_url'):
                 setattr(current,field,getattr(device,field) or getattr(current,field))
             if device.protocols:current.protocols=list(device.protocols)
             if device.urls:current.urls=list(device.urls)
@@ -1042,7 +1440,8 @@ class Window(QMainWindow):
         if item is None:
             return
         d = self.devices[item.text()]
-        self.details.setPlainText(f'IP：{d.ip}    名称：{d.name or "未提供"}    型号：{d.model or "未提供"}\n'
+        serial = f'    序列号：{d.serial}' if getattr(d, 'serial', '') else ''
+        self.details.setPlainText(f'IP：{d.ip}    名称：{d.name or "未提供"}    型号：{d.model or "未提供"}{serial}\n'
                                   f'厂商（设备自报）：{d.manufacturer or "未知"}    接收网络：{d.interface or "未知"}\n'
                                   f'服务地址：{"  ".join(d.urls) or "未提供"}')
 
@@ -1050,6 +1449,42 @@ class Window(QMainWindow):
         row = self.table.currentRow()
         if row >= 0 and self.table.item(row, 0):
             QApplication.clipboard().setText(self.table.item(row, 0).text())
+
+    def show_device_menu(self, row, position):
+        """设备列表右键：连接、设置、改名、复制、从墙上移除。"""
+        if self.presentation or not 0 <= row < self.table.rowCount():
+            return
+        item = self.table.item(row, 0)
+        if item is None:
+            return
+        ip = item.text()
+        self.table.selectRow(row)
+        menu = QMenu(self)
+        menu.addAction('连接 / 播放', self.open_player)
+        menu.addAction('连接设置…', lambda: self.open_player(force_settings=True))
+        menu.addAction('复制 IP', self.copy_ip)
+        menu.addAction('重命名…', lambda: self.rename_device(ip))
+        menu.addSeparator()
+        menu.addAction('从监控墙移除', lambda: self.remove_device_from_wall(ip))
+        menu.exec(position)
+
+    def rename_device(self, ip):
+        name, ok = QInputDialog.getText(self, '重命名摄像头', '显示名称（留空恢复设备名称）：',
+                                        text=self.device_names.get(ip) or '')
+        if not ok:
+            return
+        try:
+            self.device_names.save(ip, name)
+        except (OSError, ValueError):
+            QMessageBox.warning(self, '重命名摄像头', '名称未保存，请检查本机设置权限。')
+
+    def remove_device_from_wall(self, ip):
+        if self.wall is None:
+            return
+        tile = next((tile for tile in self.wall.tiles
+                     if tile.player.device.ip == ip), None)
+        if tile is not None:
+            self.wall.remove_tile(tile)
 
     def open_selected_settings(self):
         if self.presentation:return
@@ -1071,19 +1506,9 @@ class Window(QMainWindow):
             tile.player.connect_camera()
         else:self.show_settings(tile.player)
 
-    def open_multiview(self):
-        self.wall.update_devices(self.page_devices())
-        self.refresh_pager()
-        self.wall.show()
-
     def release_multiview(self,result):
         wall,self.wall=self.wall,None
         if wall:wall.deleteLater()
-
-    def release_player(self, player):
-        if player in self.players:
-            self.players.remove(player)
-        player.deleteLater()
 
     def video_verified(self, ip):
         for row in range(self.table.rowCount()):
@@ -1176,6 +1601,8 @@ class Window(QMainWindow):
         if settings.status()!=settings.Status.NoError:logger.warning('本机快照没有写成功，下次打开墙会是空的')
 
     def restore_local_snapshot(self):
+        if self.wall is None:
+            return
         raw=self.device_names.settings.value(LOCAL_SNAPSHOT_KEY,'')
         if not raw:return
         try:
@@ -1264,7 +1691,16 @@ class Window(QMainWindow):
 
     def on_camera_alert(self, ip, message):
         """画面异常（黑屏/冻结）上报云端；通道离线时排队，恢复后补发。"""
+        if self.closing:
+            return
         logger.info('画面异常 %s：%s', ip, message or '恢复正常')
+        try:
+            self.alert_log.record(ip, '画面异常' if message else '画面恢复',
+                                  message or '恢复正常')
+        except Exception:
+            logger.warning('告警记录写入失败', exc_info=True)
+        if message:
+            self.notify_alert(ip, message)
         if message and self.wall is not None:
             # 事发片段先落盘：环形缓冲只留 10 分钟，等后台来问早就滚掉了
             saved = self.wall.recorders.freeze(ip)
@@ -1418,6 +1854,7 @@ class Window(QMainWindow):
         self.applying_cloud=True
         try:
             self.devices={device.ip:device for device in result.devices}
+            self.refresh_device_count()
             self.table.setRowCount(0)
             for device in result.devices:
                 row=self.table.rowCount()
@@ -1528,6 +1965,13 @@ class Window(QMainWindow):
             return
         self.session_credentials.clear()
         if self.batch_panel:self.batch_panel.password.clear()
+        self.save_geometry()
+        update_worker = getattr(self, '_update_worker', None)
+        if update_worker is not None and update_worker.isRunning():
+            update_worker.wait(8000)
+        self.webhook.stop()
+        if self.tray is not None:self.tray.hide()
+        self.alert_log.close()
         event.accept()
 
 

@@ -21,7 +21,7 @@ def _template(count, featured, columns=None):
     return [(x,y,1) for y in range(rows) for x in range(columns)][:count]
 
 
-def wall_rectangles(count,width,height,featured=True,header=0,gap=0,columns=None,fill_width=False):
+def wall_rectangles(count,width,height,featured=True,columns=None,fill_width=False):
     # Titles are overlays, so the whole tile (including empty slots) is 16:9.
     if count<=0:return []
     cells=_template(count,featured,columns)
